@@ -529,12 +529,13 @@ function Publish-BranchRef {
         [Parameter(Mandatory = $true)]
         [string]$Commitish,
         [string]$RemoteExpectedOid,
+        [switch]$AllowRewrite,
         [switch]$DryRun
     )
 
     $refSpec = "${Commitish}:refs/heads/$BranchName"
     $leaseArg = ""
-    if ((Get-TrimmedText $RemoteExpectedOid) -ne "") {
+    if ($AllowRewrite -and ((Get-TrimmedText $RemoteExpectedOid) -ne "")) {
         $leaseArg = "--force-with-lease=refs/heads/${BranchName}:${RemoteExpectedOid}"
     }
 
@@ -749,7 +750,7 @@ try {
 
         if ($shouldPublishRelease) {
             Write-Step "Publishing release branch ref $releaseBranch"
-            Publish-BranchRef -RemoteName "public" -BranchName $releaseBranch -Commitish $publishedCommit -RemoteExpectedOid $releaseRemoteOid -DryRun:$publishDryRun
+            Publish-BranchRef -RemoteName "public" -BranchName $releaseBranch -Commitish $publishedCommit -RemoteExpectedOid $releaseRemoteOid -AllowRewrite -DryRun:$publishDryRun
         }
 
         if ($shouldPublishTag) {
