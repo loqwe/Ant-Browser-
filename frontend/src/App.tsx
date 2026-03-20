@@ -1,31 +1,45 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
+import type { ComponentType } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { ThemeProvider } from './shared/theme'
 import { Layout } from './shared/layout'
-import { ToastContainer, Modal, Button } from './shared/components'
+import { ToastContainer, Modal, Button, Loading } from './shared/components'
 import { AlertCircle } from 'lucide-react'
-import { DashboardPage } from './modules/dashboard'
-import { SettingsPage } from './modules/settings'
-import { ProfilePage } from './modules/profile'
-import { AdminKeygenPage } from './modules/profile/AdminKeygenPage'
-import { ChartsPage } from './modules/charts'
-import {
-  BrowserListPage,
-  BrowserDetailPage,
-  BrowserEditPage,
-  BrowserCopyPage,
-  BrowserLogsPage,
-  ProxyPoolPage,
-  CoreManagementPage,
-  BookmarkSettingsPage,
-  LaunchApiDocsPage,
-  TagManagementPage,
-  AutomationPage,
-  UsageTutorialPage,
-} from './modules/browser'
-import { QuickLaunchModal } from './modules/browser/components/QuickLaunchModal'
 import { useNotificationStore } from './store/notificationStore'
 import { useBackupStore } from './store/backupStore'
+import { ForceQuit as ForceQuitApp } from './wailsjs/go/main/App'
+import { Environment, Quit, WindowHide, WindowMinimise } from './wailsjs/runtime/runtime'
+
+function lazyNamed<TModule extends Record<string, ComponentType<any>>>(
+  loader: () => Promise<TModule>,
+  exportName: keyof TModule,
+) {
+  return lazy(async () => {
+    const module = await loader()
+    return {
+      default: module[exportName] as ComponentType<any>,
+    }
+  })
+}
+
+const DashboardPage = lazyNamed(() => import('./modules/dashboard/DashboardPage'), 'DashboardPage')
+const SettingsPage = lazyNamed(() => import('./modules/settings/SettingsPage'), 'SettingsPage')
+const ProfilePage = lazyNamed(() => import('./modules/profile/ProfilePage'), 'ProfilePage')
+const AdminKeygenPage = lazyNamed(() => import('./modules/profile/AdminKeygenPage'), 'AdminKeygenPage')
+const ChartsPage = lazyNamed(() => import('./modules/charts/ChartsPage'), 'ChartsPage')
+const BrowserListPage = lazyNamed(() => import('./modules/browser/pages/BrowserListPage'), 'BrowserListPage')
+const BrowserDetailPage = lazyNamed(() => import('./modules/browser/pages/BrowserDetailPage'), 'BrowserDetailPage')
+const BrowserEditPage = lazyNamed(() => import('./modules/browser/pages/BrowserEditPage'), 'BrowserEditPage')
+const BrowserCopyPage = lazyNamed(() => import('./modules/browser/pages/BrowserCopyPage'), 'BrowserCopyPage')
+const BrowserLogsPage = lazyNamed(() => import('./modules/browser/pages/BrowserLogsPage'), 'BrowserLogsPage')
+const ProxyPoolPage = lazyNamed(() => import('./modules/browser/pages/ProxyPoolPage'), 'ProxyPoolPage')
+const CoreManagementPage = lazyNamed(() => import('./modules/browser/pages/CoreManagementPage'), 'CoreManagementPage')
+const BookmarkSettingsPage = lazyNamed(() => import('./modules/browser/pages/BookmarkSettingsPage'), 'BookmarkSettingsPage')
+const LaunchApiDocsPage = lazyNamed(() => import('./modules/browser/pages/LaunchApiDocsPage'), 'LaunchApiDocsPage')
+const TagManagementPage = lazyNamed(() => import('./modules/browser/pages/TagManagementPage'), 'TagManagementPage')
+const AutomationPage = lazyNamed(() => import('./modules/browser/pages/AutomationPage'), 'AutomationPage')
+const UsageTutorialPage = lazyNamed(() => import('./modules/browser/pages/UsageTutorialPage'), 'UsageTutorialPage')
+const QuickLaunchModal = lazyNamed(() => import('./modules/browser/components/QuickLaunchModal'), 'QuickLaunchModal')
 
 function useWailsNotifications() {
   const addNotification = useNotificationStore((s) => s.addNotification)
@@ -77,9 +91,11 @@ function useWailsNotifications() {
 
 function CloseConfirmModal() {
   const [open, setOpen] = useState(false)
+  const [platform, setPlatform] = useState('windows')
   const importInProgress = useBackupStore((s) => s.importInProgress)
   const importProgress = useBackupStore((s) => s.importProgress)
   const importMessage = useBackupStore((s) => s.importMessage)
+  const supportsTray = platform === 'windows'
 
   useEffect(() => {
     const runtime = (window as any).runtime
@@ -93,21 +109,42 @@ function CloseConfirmModal() {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+
+    Environment()
+      .then((info) => {
+        if (!cancelled && info?.platform) {
+          setPlatform(info.platform)
+        }
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const handleMinimize = () => {
     setOpen(false)
-    const runtime = (window as any).runtime
-    runtime?.WindowHide?.()
+    if (supportsTray) {
+      WindowHide()
+      return
+    }
+    WindowMinimise()
   }
 
   const handleQuit = async () => {
     setOpen(false)
-    const goApp = (window as any).go?.main?.App
-    if (goApp?.ForceQuit) {
-      await goApp.ForceQuit()
-    } else {
-      const runtime = (window as any).runtime
-      runtime?.Quit?.()
+    try {
+      await Promise.race([
+        ForceQuitApp(),
+        new Promise((resolve) => setTimeout(resolve, 1200)),
+      ])
+    } catch (error) {
+      console.error('ForceQuit failed, falling back to runtime.Quit()', error)
     }
+    Quit()
   }
 
   return (
@@ -135,8 +172,9 @@ function CloseConfirmModal() {
           </p>
         ) : (
           <p className="text-sm text-[var(--color-text-secondary)] text-center mb-6">
-            退出后将停止所有在此客户端运行的服务，<br />
-            如果您需要保持服务运行，请选择「最小化到托盘」。
+            退出后将停止所有在此客户端运行的服务。
+            <br />
+            {supportsTray ? '如果您需要保持服务运行，请选择「最小化到托盘」。' : 'Linux 当前不提供托盘最小化，关闭窗口将直接退出应用。'}
           </p>
         )}
 
@@ -152,8 +190,8 @@ function CloseConfirmModal() {
             </>
           ) : (
             <>
-              <Button variant="secondary" className="flex-1" onClick={handleMinimize}>
-                最小化到托盘
+              <Button variant="secondary" className="flex-1" onClick={supportsTray ? handleMinimize : () => setOpen(false)}>
+                {supportsTray ? '最小化到托盘' : '取消'}
               </Button>
               <Button variant="danger" className="flex-1" onClick={handleQuit}>
                 直接退出
@@ -169,6 +207,11 @@ function CloseConfirmModal() {
 function App() {
   useWailsNotifications()
   const [quickLaunchOpen, setQuickLaunchOpen] = useState(false)
+  const routeFallback = (
+    <div className="flex min-h-[240px] items-center justify-center py-10">
+      <Loading text="页面加载中..." />
+    </div>
+  )
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -189,30 +232,36 @@ function App() {
     <ThemeProvider>
       <Router>
         <Layout>
-          <Routes>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/charts" element={<ChartsPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/profile" element={<ProfilePage />} />
-            <Route path="/admin/keygen" element={<AdminKeygenPage />} />
-            <Route path="/browser/list" element={<BrowserListPage />} />
-            <Route path="/browser/detail/:id" element={<BrowserDetailPage />} />
-            <Route path="/browser/edit/:id" element={<BrowserEditPage />} />
-            <Route path="/browser/copy/:id" element={<BrowserCopyPage />} />
-            <Route path="/browser/monitor" element={<Navigate to="/browser/list" replace />} />
-            <Route path="/browser/logs" element={<BrowserLogsPage />} />
-            <Route path="/browser/proxy-pool" element={<ProxyPoolPage />} />
-            <Route path="/browser/cores" element={<CoreManagementPage />} />
-            <Route path="/browser/bookmarks" element={<BookmarkSettingsPage />} />
-            <Route path="/browser/automation" element={<AutomationPage />} />
-            <Route path="/browser/launch-api" element={<LaunchApiDocsPage />} />
-            <Route path="/browser/tags" element={<TagManagementPage />} />
-            <Route path="/system/tutorial" element={<UsageTutorialPage />} />
-          </Routes>
+          <Suspense fallback={routeFallback}>
+            <Routes>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/charts" element={<ChartsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/admin/keygen" element={<AdminKeygenPage />} />
+              <Route path="/browser/list" element={<BrowserListPage />} />
+              <Route path="/browser/detail/:id" element={<BrowserDetailPage />} />
+              <Route path="/browser/edit/:id" element={<BrowserEditPage />} />
+              <Route path="/browser/copy/:id" element={<BrowserCopyPage />} />
+              <Route path="/browser/monitor" element={<Navigate to="/browser/list" replace />} />
+              <Route path="/browser/logs" element={<BrowserLogsPage />} />
+              <Route path="/browser/proxy-pool" element={<ProxyPoolPage />} />
+              <Route path="/browser/cores" element={<CoreManagementPage />} />
+              <Route path="/browser/bookmarks" element={<BookmarkSettingsPage />} />
+              <Route path="/browser/automation" element={<AutomationPage />} />
+              <Route path="/browser/launch-api" element={<LaunchApiDocsPage />} />
+              <Route path="/browser/tags" element={<TagManagementPage />} />
+              <Route path="/system/tutorial" element={<UsageTutorialPage />} />
+            </Routes>
+          </Suspense>
         </Layout>
         <ToastContainer />
         <CloseConfirmModal />
-        <QuickLaunchModal open={quickLaunchOpen} onClose={() => setQuickLaunchOpen(false)} />
+        <Suspense fallback={null}>
+          {quickLaunchOpen ? (
+            <QuickLaunchModal open={quickLaunchOpen} onClose={() => setQuickLaunchOpen(false)} />
+          ) : null}
+        </Suspense>
       </Router>
     </ThemeProvider>
   )

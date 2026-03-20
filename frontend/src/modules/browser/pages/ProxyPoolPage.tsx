@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Card, ConfirmModal, FormItem, Input, Modal, Switch, Table, Textarea, toast } from '../../../shared/components'
+import { Button, Card, ConfirmModal, FormItem, Input, Modal, Select, Switch, Table, Textarea, toast } from '../../../shared/components'
 import type { SortOrder, TableColumn } from '../../../shared/components/Table'
 import type { BrowserProxy, ProxyIPHealthResult } from '../types'
 import { fetchBrowserProxies, fetchBrowserProxyGroups, saveBrowserProxies, browserProxyTestSpeed, browserProxyBatchTestSpeed, browserProxyCheckIPHealth, browserProxyBatchCheckIPHealth, fetchClashImportFromURL } from '../api'
@@ -37,6 +37,37 @@ interface ClashProxy {
   server: string
   port: number
   [key: string]: any
+}
+
+type ProxyImportMode = 'clash' | 'direct'
+
+interface DirectImportForm {
+  proxyName: string
+  protocol: 'http' | 'https' | 'socks5'
+  server: string
+  port: string
+  username: string
+  password: string
+}
+
+const DIRECT_PROXY_PROTOCOL_OPTIONS = [
+  { value: 'http', label: 'HTTP' },
+  { value: 'https', label: 'HTTPS' },
+  { value: 'socks5', label: 'SOCKS5' },
+] as const
+
+const INITIAL_DIRECT_IMPORT_FORM: DirectImportForm = {
+  proxyName: '',
+  protocol: 'http',
+  server: '',
+  port: '',
+  username: '',
+  password: '',
+}
+
+interface ImportCandidate {
+  proxyName: string
+  proxyConfig: string
 }
 
 interface ProxyDisplayInfo {
@@ -205,6 +236,116 @@ function parseClashImportText(raw: string): ClashProxy[] {
   throw new Error('无效的 YAML 格式，需要包含 proxies 数组')
 }
 
+function normalizeDirectProxyConfig(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return ''
+  if (/^socket:\/\//i.test(trimmed)) {
+    return trimmed.replace(/^socket:\/\//i, 'socks5://')
+  }
+  if (/^socks:\/\//i.test(trimmed)) {
+    return trimmed.replace(/^socks:\/\//i, 'socks5://')
+  }
+  return trimmed
+}
+
+function resolveDirectProxyName(rawName: string, scheme: string, server: string, port: number, index: number, prefix: string): string {
+  const name = rawName.trim()
+  const fallbackName = server
+    ? `${scheme.toUpperCase()}-${server}${port > 0 ? `:${port}` : ''}`
+    : `导入代理 ${index + 1}`
+  const finalName = name || fallbackName
+  return prefix ? `${prefix}-${finalName}` : finalName
+}
+
+function formatDirectProxyHost(raw: string): string {
+  const host = raw.trim()
+  if (!host) return ''
+  if (host.startsWith('[') && host.endsWith(']')) {
+    return host
+  }
+  return host.includes(':') ? `[${host}]` : host
+}
+
+function buildDirectImportCandidate(form: DirectImportForm): ImportCandidate {
+  const serverInput = form.server.trim()
+  if (!serverInput) {
+    throw new Error('请输入代理地址')
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(serverInput)) {
+    throw new Error('代理地址只需要填写主机名或 IP，不需要协议头')
+  }
+
+  const portInput = form.port.trim()
+  if (!portInput) {
+    throw new Error('请输入代理端口')
+  }
+  if (!/^\d+$/.test(portInput)) {
+    throw new Error('代理端口必须为数字')
+  }
+
+  const port = Number(portInput)
+  if (port < 1 || port > 65535) {
+    throw new Error('代理端口必须在 1-65535 之间')
+  }
+
+  const username = form.username.trim()
+  const password = form.password
+  if (password && !username) {
+    throw new Error('填写密码时请同时填写账号')
+  }
+
+  const auth = username
+    ? `${encodeURIComponent(username)}${password ? `:${encodeURIComponent(password)}` : ''}@`
+    : ''
+  const rawConfig = `${form.protocol}://${auth}${formatDirectProxyHost(serverInput)}:${port}`
+
+  let parsedURL: URL
+  try {
+    parsedURL = new URL(rawConfig)
+  } catch {
+    throw new Error('请输入有效的代理地址')
+  }
+
+  if (!parsedURL.hostname) {
+    throw new Error('请输入有效的代理地址')
+  }
+
+  const normalizedConfig = normalizeDirectProxyConfig(parsedURL.toString()).replace(/\/$/, '')
+  const normalizedServer = parsedURL.hostname.replace(/^\[(.*)\]$/, '$1')
+
+  return {
+    proxyName: resolveDirectProxyName(form.proxyName, form.protocol, normalizedServer, port, 0, ''),
+    proxyConfig: normalizedConfig,
+  }
+}
+
+function buildImportCandidatesFromClash(parsedProxies: ClashProxy[], prefix: string): ImportCandidate[] {
+  return parsedProxies.map((proxy, index) => ({
+    proxyName: resolveImportedProxyName(proxy, index, prefix),
+    proxyConfig: proxyToYaml(proxy),
+  }))
+}
+
+function buildImportPreview(candidates: ImportCandidate[], groupName: string): ProxyDisplayInfo[] {
+  return candidates.map((candidate, index) => {
+    const info = parseProxyInfo(candidate.proxyConfig)
+    return {
+      proxyId: `preview-${index}`,
+      proxyName: candidate.proxyName,
+      proxyConfig: candidate.proxyConfig,
+      groupName,
+      sourceId: '',
+      sourceUrl: '',
+      sourceAutoRefresh: false,
+      sourceRefreshIntervalM: 0,
+      sourceLastRefreshAt: '',
+      type: info.type || '-',
+      server: info.server || '-',
+      port: info.port || 0,
+    }
+  })
+}
+
 function parseTimestampMs(value: string): number {
   const v = (value || '').trim()
   if (!v) return 0
@@ -229,6 +370,43 @@ function sourceHostLabel(sourceURL: string): string {
   } catch {
     return raw
   }
+}
+
+function normalizeSourceURL(sourceURL: string): string {
+  const raw = (sourceURL || '').trim()
+  if (!raw) return ''
+  try {
+    const parsed = new URL(raw)
+    parsed.hash = ''
+    return parsed.toString()
+  } catch {
+    return raw
+  }
+}
+
+function buildStableSourceID(sourceURL: string, sourceNamePrefix: string): string {
+  const key = `${normalizeSourceURL(sourceURL)}|||${sourceNamePrefix.trim()}`
+  // djb2 变体，输出稳定且实现简单。
+  let hash = 5381
+  for (let i = 0; i < key.length; i += 1) {
+    hash = ((hash << 5) + hash) ^ key.charCodeAt(i)
+  }
+  const unsigned = hash >>> 0
+  return `src-${unsigned.toString(36)}`
+}
+
+function resolveImportSourceID(list: BrowserProxy[], sourceURL: string, sourceNamePrefix: string): string {
+  const normalizedURL = normalizeSourceURL(sourceURL)
+  const normalizedPrefix = sourceNamePrefix.trim()
+  const existing = list.find(item =>
+    normalizeSourceURL(item.sourceUrl || '') === normalizedURL &&
+    (item.sourceNamePrefix || '').trim() === normalizedPrefix &&
+    (item.sourceId || '').trim() !== ''
+  )
+  if (existing?.sourceId?.trim()) {
+    return existing.sourceId.trim()
+  }
+  return buildStableSourceID(sourceURL, sourceNamePrefix)
 }
 
 function collectURLImportSources(list: BrowserProxy[]): URLImportSourceMeta[] {
@@ -273,15 +451,10 @@ function resolveImportedProxyName(proxy: ClashProxy, index: number, prefix: stri
   return prefix ? `${prefix}-${rawName}` : rawName
 }
 
-function buildRefreshedSourceProxies(
-  parsedProxies: ClashProxy[],
-  oldSourceProxies: BrowserProxy[],
-  meta: URLImportSourceMeta,
-  refreshedAt: string
-): BrowserProxy[] {
+function createExistingProxyIDPicker(oldSourceProxies: BrowserProxy[]) {
   const exactMap = new Map<string, BrowserProxy[]>()
   const nameMap = new Map<string, BrowserProxy[]>()
-  for (const item of oldSourceProxies) {
+  oldSourceProxies.forEach(item => {
     const exactKey = `${item.proxyName}|||${item.proxyConfig}`
     const exactList = exactMap.get(exactKey) || []
     exactList.push(item)
@@ -291,15 +464,16 @@ function buildRefreshedSourceProxies(
     const nameList = nameMap.get(nameKey) || []
     nameList.push(item)
     nameMap.set(nameKey, nameList)
-  }
+  })
 
-  const pickExisting = (name: string, configText: string): string | null => {
+  return (name: string, configText: string): string | null => {
     const exactKey = `${name}|||${configText}`
     const exactList = exactMap.get(exactKey)
     if (exactList && exactList.length > 0) {
       const item = exactList.shift()
       if (item?.proxyId) return item.proxyId
     }
+
     const nameList = nameMap.get(name)
     if (nameList && nameList.length > 0) {
       const item = nameList.shift()
@@ -307,6 +481,15 @@ function buildRefreshedSourceProxies(
     }
     return null
   }
+}
+
+function buildRefreshedSourceProxies(
+  parsedProxies: ClashProxy[],
+  oldSourceProxies: BrowserProxy[],
+  meta: URLImportSourceMeta,
+  refreshedAt: string
+): BrowserProxy[] {
+  const pickExisting = createExistingProxyIDPicker(oldSourceProxies)
 
   const prefix = meta.sourceNamePrefix.trim()
   const sourceGroupName = meta.sourceGroupName.trim()
@@ -530,12 +713,14 @@ export function ProxyPoolPage() {
   const [batchDeleteConfirmOpen, setBatchDeleteConfirmOpen] = useState(false)
 
   const [importModalOpen, setImportModalOpen] = useState(false)
+  const [importMode, setImportMode] = useState<ProxyImportMode>('clash')
   const [importUrl, setImportUrl] = useState('')
   const [importResolvedUrl, setImportResolvedUrl] = useState('')
   const [importText, setImportText] = useState('')
   const [importDnsServers, setImportDnsServers] = useState('')
   const [importNamePrefix, setImportNamePrefix] = useState('')
   const [importGroupName, setImportGroupName] = useState('')
+  const [directImportForm, setDirectImportForm] = useState<DirectImportForm>(() => ({ ...INITIAL_DIRECT_IMPORT_FORM }))
   const [previewModalOpen, setPreviewModalOpen] = useState(false)
   const [previewList, setPreviewList] = useState<ProxyDisplayInfo[]>([])
   const [removedPreviewProxyNames, setRemovedPreviewProxyNames] = useState<string[]>([])
@@ -1228,25 +1413,13 @@ export function ProxyPoolPage() {
     setDeletingId(null)
   }
 
-  const buildImportPreview = (parsedProxies: ClashProxy[]) => {
-    return parsedProxies.map((p, idx) => {
-      const prefix = importNamePrefix.trim()
-      const proxyName = resolveImportedProxyName(p, idx, prefix)
-      return {
-        proxyId: `preview-${idx}`,
-        proxyName,
-        proxyConfig: proxyToYaml(p),
-        groupName: importGroupName.trim(),
-        sourceId: '',
-        sourceUrl: '',
-        sourceAutoRefresh: false,
-        sourceRefreshIntervalM: 0,
-        sourceLastRefreshAt: '',
-        type: p.type || '-',
-        server: p.server || '-',
-        port: p.port || 0,
-      } as ProxyDisplayInfo
-    })
+  const handleImportModeChange = (nextMode: ProxyImportMode) => {
+    setImportMode(nextMode)
+    setImportResolvedUrl('')
+    if (nextMode !== 'clash') {
+      setImportUrl('')
+      setImportDnsServers('')
+    }
   }
 
   const handleFetchImportURL = async () => {
@@ -1283,14 +1456,17 @@ export function ProxyPoolPage() {
     }
   }
 
-  const handleParseYaml = () => {
+  const handleParseImport = () => {
     try {
-      const parsedProxies = parseClashImportText(importText)
-      if (!parsedProxies.length) {
+      const prefix = importNamePrefix.trim()
+      const candidates = importMode === 'clash'
+        ? buildImportCandidatesFromClash(parseClashImportText(importText), prefix)
+        : [buildDirectImportCandidate(directImportForm)]
+      if (!candidates.length) {
         toast.error('未解析到可导入代理')
         return
       }
-      const preview = buildImportPreview(parsedProxies)
+      const preview = buildImportPreview(candidates, importGroupName.trim())
       setRemovedPreviewProxyNames([])
       setPreviewList(preview)
       setImportModalOpen(false)
@@ -1307,19 +1483,23 @@ export function ProxyPoolPage() {
     }
     setImporting(true)
     try {
-      const sourceURL = importResolvedUrl.trim()
+      const sourceURL = importMode === 'clash' ? importResolvedUrl.trim() : ''
       const isURLImport = !!sourceURL
-      const sourceID = isURLImport ? `src-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : ''
-      const sourceNamePrefix = importNamePrefix.trim()
+      const sourceNamePrefix = importMode === 'clash' ? importNamePrefix.trim() : ''
+      const sourceID = isURLImport ? resolveImportSourceID(proxies, sourceURL, sourceNamePrefix) : ''
       const sourceAutoRefresh = isURLImport ? globalAutoRefreshEnabled : false
       const sourceRefreshIntervalM = sourceAutoRefresh ? globalRefreshInterval : 0
       const sourceLastRefreshAt = isURLImport ? new Date().toISOString() : ''
+      const oldSourceProxies = isURLImport
+        ? proxies.filter(item => (item.sourceId || '').trim() === sourceID)
+        : []
+      const pickExistingID = createExistingProxyIDPicker(oldSourceProxies)
 
-      const newProxies: BrowserProxy[] = previewList.map((p, idx) => ({
-        proxyId: `proxy-${Date.now()}-${idx}`,
+      const newProxies: BrowserProxy[] = previewList.map((p) => ({
+        proxyId: pickExistingID(p.proxyName, p.proxyConfig) || nextProxyID(),
         proxyName: p.proxyName,
         proxyConfig: p.proxyConfig,
-        dnsServers: importDnsServers.trim() || undefined,
+        dnsServers: importMode === 'clash' ? importDnsServers.trim() || undefined : undefined,
         groupName: importGroupName.trim() || undefined,
         sourceId: sourceID || undefined,
         sourceUrl: sourceURL || undefined,
@@ -1328,7 +1508,9 @@ export function ProxyPoolPage() {
         sourceRefreshIntervalM,
         sourceLastRefreshAt: sourceLastRefreshAt || undefined,
       }))
-      const allProxies = [...proxies, ...newProxies]
+      const allProxies = isURLImport
+        ? proxies.filter(item => (item.sourceId || '').trim() !== sourceID).concat(newProxies)
+        : [...proxies, ...newProxies]
       await saveProxies(allProxies)
       if (isURLImport && removedPreviewProxyNames.length > 0) {
         appendSourceIgnoredProxyNames(sourceID, removedPreviewProxyNames)
@@ -1340,6 +1522,7 @@ export function ProxyPoolPage() {
       setImportDnsServers('')
       setImportNamePrefix('')
       setImportGroupName('')
+      setDirectImportForm({ ...INITIAL_DIRECT_IMPORT_FORM })
       setPreviewList([])
       setRemovedPreviewProxyNames([])
       toast.success(`成功导入 ${newProxies.length} 个代理`)
@@ -1351,13 +1534,16 @@ export function ProxyPoolPage() {
   }
 
   const selectedCount = selectedIds.size
+  const canParseImport = importMode === 'clash'
+    ? !!importText.trim()
+    : !!directImportForm.server.trim() && !!directImportForm.port.trim()
 
   return (
     <div className="space-y-5 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">代理池配置</h1>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1">管理 Clash VPN 代理，供实例绑定使用</p>
+          <p className="text-sm text-[var(--color-text-muted)] mt-1">管理代理配置，支持 Clash 订阅、HTTP、HTTPS、SOCKS5</p>
         </div>
         <div className="flex gap-2">
           <Button
@@ -1371,7 +1557,7 @@ export function ProxyPoolPage() {
           </Button>
           <Button size="sm" variant="secondary" onClick={handleCheckAllIPHealth} loading={checkingAllIPHealth} disabled={filteredList.length === 0}>检测IP健康</Button>
           <Button size="sm" variant="secondary" onClick={handleTestAll} loading={testingAll} disabled={filteredList.length === 0}>测试全部</Button>
-          <Button size="sm" onClick={() => setImportModalOpen(true)}>导入 Clash</Button>
+          <Button size="sm" onClick={() => setImportModalOpen(true)}>导入代理</Button>
         </div>
       </div>
 
@@ -1454,47 +1640,123 @@ export function ProxyPoolPage() {
         />
       </Card>
 
-      <Modal open={importModalOpen} onClose={() => setImportModalOpen(false)} title="导入 Clash 代理配置" width="600px"
+      <Modal open={importModalOpen} onClose={() => setImportModalOpen(false)} title="导入代理配置" width="600px"
         footer={
           <>
             <Button variant="secondary" onClick={() => setImportModalOpen(false)} disabled={fetchingImportUrl}>取消</Button>
-            <Button onClick={handleParseYaml} disabled={fetchingImportUrl || !importText.trim()}>解析</Button>
+            <Button onClick={handleParseImport} disabled={fetchingImportUrl || !canParseImport}>解析</Button>
           </>
         }>
         <div className="space-y-4">
-          <p className="text-sm text-[var(--color-text-muted)]">支持粘贴 Clash YAML，或通过订阅 URL 自动拉取并解析（含 proxies、dns、proxy-groups）</p>
-          <FormItem label="订阅 URL（可选）">
-            <div className="flex gap-2">
-              <Input
-                value={importUrl}
-                onChange={e => {
-                  const next = e.target.value
-                  setImportUrl(next)
-                  if (importResolvedUrl.trim() && next.trim() !== importResolvedUrl.trim()) {
-                    setImportResolvedUrl('')
-                  }
-                }}
-                placeholder="https://example.com/clash/subscription"
-                className="flex-1"
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant={importMode === 'clash' ? undefined : 'secondary'}
+              onClick={() => handleImportModeChange('clash')}
+            >
+              Clash 订阅 / YAML
+            </Button>
+            <Button
+              variant={importMode === 'direct' ? undefined : 'secondary'}
+              onClick={() => handleImportModeChange('direct')}
+            >
+              HTTP / SOCKS5（测试中）
+            </Button>
+          </div>
+          <p className="text-sm text-[var(--color-text-muted)]">
+            {importMode === 'clash'
+              ? '支持粘贴 Clash YAML，或通过订阅 URL 自动拉取并解析（含 proxies、dns、proxy-groups）'
+              : '支持单条录入 HTTP / HTTPS / SOCKS5 代理，账号和密码均可留空，导入后直接生效，不走 Clash 桥接'}
+          </p>
+          {importMode === 'clash' && (
+            <>
+              <FormItem label="订阅 URL（可选）">
+                <div className="flex gap-2">
+                  <Input
+                    value={importUrl}
+                    onChange={e => {
+                      const next = e.target.value
+                      setImportUrl(next)
+                      if (importResolvedUrl.trim() && next.trim() !== importResolvedUrl.trim()) {
+                        setImportResolvedUrl('')
+                      }
+                    }}
+                    placeholder="https://example.com/clash/subscription"
+                    className="flex-1"
+                  />
+                  <Button
+                    variant="secondary"
+                    onClick={handleFetchImportURL}
+                    loading={fetchingImportUrl}
+                    disabled={!importUrl.trim()}
+                  >
+                    从 URL 获取
+                  </Button>
+                </div>
+                {importResolvedUrl.trim() && (
+                  <p className="text-xs text-[var(--color-success)] mt-1 break-all">
+                    已绑定订阅：{importResolvedUrl}
+                  </p>
+                )}
+                <p className="text-xs text-[var(--color-text-muted)] mt-1">获取成功后会自动回填 YAML 文本，并尝试自动填充 DNS 与建议分组；自动刷新时间请在列表顶部统一配置</p>
+              </FormItem>
+              <Textarea
+                value={importText}
+                onChange={e => setImportText(e.target.value)}
+                rows={12}
+                placeholder={`proxies:\n  - name: vless-v6\n    type: vless\n    server: example.com\n    port: 443\n    uuid: your-uuid\n    ...`}
               />
-              <Button
-                variant="secondary"
-                onClick={handleFetchImportURL}
-                loading={fetchingImportUrl}
-                disabled={!importUrl.trim()}
-              >
-                从 URL 获取
-              </Button>
+            </>
+          )}
+          {importMode === 'direct' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <FormItem label="代理协议" required>
+                <Select
+                  options={[...DIRECT_PROXY_PROTOCOL_OPTIONS]}
+                  value={directImportForm.protocol}
+                  onChange={e => setDirectImportForm(prev => ({ ...prev, protocol: e.target.value as DirectImportForm['protocol'] }))}
+                />
+              </FormItem>
+              <FormItem label="代理名称（可选）">
+                <Input
+                  value={directImportForm.proxyName}
+                  onChange={e => setDirectImportForm(prev => ({ ...prev, proxyName: e.target.value }))}
+                  placeholder="例如：香港节点"
+                />
+              </FormItem>
+              <FormItem label="代理地址" required>
+                <Input
+                  value={directImportForm.server}
+                  onChange={e => setDirectImportForm(prev => ({ ...prev, server: e.target.value }))}
+                  placeholder="例如：127.0.0.1 或 hk.example.com"
+                />
+              </FormItem>
+              <FormItem label="代理端口" required>
+                <Input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={directImportForm.port}
+                  onChange={e => setDirectImportForm(prev => ({ ...prev, port: e.target.value }))}
+                  placeholder="例如：1080"
+                />
+              </FormItem>
+              <FormItem label="账号（可选）">
+                <Input
+                  value={directImportForm.username}
+                  onChange={e => setDirectImportForm(prev => ({ ...prev, username: e.target.value }))}
+                  placeholder="留空则不使用认证"
+                />
+              </FormItem>
+              <FormItem label="密码（可选）">
+                <Input
+                  type="password"
+                  value={directImportForm.password}
+                  onChange={e => setDirectImportForm(prev => ({ ...prev, password: e.target.value }))}
+                  placeholder="留空则不使用密码"
+                />
+              </FormItem>
             </div>
-            {importResolvedUrl.trim() && (
-              <p className="text-xs text-[var(--color-success)] mt-1 break-all">
-                已绑定订阅：{importResolvedUrl}
-              </p>
-            )}
-            <p className="text-xs text-[var(--color-text-muted)] mt-1">获取成功后会自动回填 YAML 文本，并尝试自动填充 DNS 与建议分组；自动刷新时间请在列表顶部统一配置</p>
-          </FormItem>
-          <Textarea value={importText} onChange={e => setImportText(e.target.value)} rows={12}
-            placeholder={`proxies:\n  - name: vless-v6\n    type: vless\n    server: example.com\n    port: 443\n    uuid: your-uuid\n    ...`} />
+          )}
           <FormItem label="分组名称（可选）">
             <Input
               value={importGroupName}
@@ -1509,28 +1771,32 @@ export function ProxyPoolPage() {
             )}
             <p className="text-xs text-[var(--color-text-muted)] mt-1">填写后本次导入的代理将归入该分组，可按分组筛选</p>
           </FormItem>
-          <FormItem label="名称前缀（可选）">
-            <Input
-              value={importNamePrefix}
-              onChange={e => setImportNamePrefix(e.target.value)}
-              placeholder="例如：HK、US、机场A"
-            />
-            <p className="text-xs text-[var(--color-text-muted)] mt-1">
-              填写后代理名称将变为 <code className="px-1 bg-[var(--color-bg-secondary)] rounded">前缀-原名称</code>，留空则保持原名
-            </p>
-          </FormItem>
-          <FormItem label="批量 DNS 配置（可选）">
-            <Textarea value={importDnsServers} onChange={e => setImportDnsServers(e.target.value)} rows={5}
-              placeholder={`dns:\n  enable: true\n  nameserver:\n    - 119.29.29.29\n    - 223.5.5.5`} />
-            <p className="text-xs text-[var(--color-text-muted)] mt-1">留空则不配置 DNS，填写后将应用到本次导入的所有代理</p>
-          </FormItem>
+          {importMode === 'clash' && (
+            <FormItem label="名称前缀（可选）">
+              <Input
+                value={importNamePrefix}
+                onChange={e => setImportNamePrefix(e.target.value)}
+                placeholder="例如：HK、US、机场A"
+              />
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                填写后代理名称将变为 <code className="px-1 bg-[var(--color-bg-secondary)] rounded">前缀-原名称</code>，留空则保持原名
+              </p>
+            </FormItem>
+          )}
+          {importMode === 'clash' && (
+            <FormItem label="批量 DNS 配置（可选）">
+              <Textarea value={importDnsServers} onChange={e => setImportDnsServers(e.target.value)} rows={5}
+                placeholder={`dns:\n  enable: true\n  nameserver:\n    - 119.29.29.29\n    - 223.5.5.5`} />
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">留空则不配置 DNS，填写后将应用到本次导入的所有代理</p>
+            </FormItem>
+          )}
         </div>
       </Modal>
 
       <Modal open={previewModalOpen} onClose={() => setPreviewModalOpen(false)} title="确认导入以下代理" width="700px"
         footer={<><Button variant="secondary" onClick={() => { setPreviewModalOpen(false); setImportModalOpen(true) }}>返回修改</Button><Button onClick={handleConfirmImport} loading={importing} disabled={previewList.length === 0}>确认导入</Button></>}>
         <div className="space-y-3">
-          {importDnsServers.trim() && (
+          {importMode === 'clash' && importDnsServers.trim() && (
             <p className="text-xs text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)] px-3 py-2 rounded">已配置批量 DNS，将应用到以下所有代理</p>
           )}
           <p className="text-xs text-[var(--color-text-muted)]">
@@ -1553,12 +1819,12 @@ export function ProxyPoolPage() {
             </datalist>
           </FormItem>
           <FormItem label="代理配置">
-            <Textarea value={editForm.proxyConfig} onChange={e => setEditForm(prev => ({ ...prev, proxyConfig: e.target.value }))} rows={10} placeholder="Clash YAML 格式配置" />
+            <Textarea value={editForm.proxyConfig} onChange={e => setEditForm(prev => ({ ...prev, proxyConfig: e.target.value }))} rows={10} placeholder="支持 Clash YAML、http://、https://、socks5:// 代理配置" />
           </FormItem>
           <FormItem label="DNS 服务器（可选）">
             <Textarea value={editForm.dnsServers} onChange={e => setEditForm(prev => ({ ...prev, dnsServers: e.target.value }))} rows={6}
               placeholder={`dns:\n  enable: true\n  nameserver:\n    - 119.29.29.29\n    - 223.5.5.5`} />
-            <p className="text-xs text-[var(--color-text-muted)] mt-1">支持 Clash dns: YAML 格式，留空则使用系统默认 DNS</p>
+            <p className="text-xs text-[var(--color-text-muted)] mt-1">支持 Clash dns: YAML 格式，主要用于 Clash / 桥接代理；直连 HTTP/SOCKS5 通常不会使用这里的 DNS 配置</p>
           </FormItem>
         </div>
       </Modal>

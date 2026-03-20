@@ -7,9 +7,8 @@
 // 项目基础信息
 export const projectConfig = {
   name: 'Ant Browser',
-  shortName: '架',
-  description: '基于 Wails + React 的桌面应用脚手架',
-  version: '1.0.0',
+  shortName: 'Ant',
+  description: '面向多账号隔离、代理绑定和本地环境管理的桌面浏览器工具',
   primaryColor: 'primary',
 }
 
@@ -36,7 +35,7 @@ export const navigationConfig: NavSection[] = [
     title: '指纹浏览器',
     items: [
       { name: '实例列表', path: '/browser/list', icon: 'Monitor' },
-      { name: '自动化（未完成）', path: '/browser/automation', icon: 'Bot' },
+      { name: '自动化接口', path: '/browser/automation', icon: 'Bot' },
       { name: '内核管理', path: '/browser/cores', icon: 'Cpu' },
       { name: '代理池配置', path: '/browser/proxy-pool', icon: 'Globe' },
       { name: '默认书签', path: '/browser/bookmarks', icon: 'Bookmark' },

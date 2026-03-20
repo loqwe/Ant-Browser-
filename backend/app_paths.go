@@ -1,26 +1,17 @@
 package backend
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
+	"ant-chrome/backend/internal/apppath"
 )
 
 // appRootAbs 返回应用根目录的绝对路径，优先使用 App 注入的 appRoot。
 func (a *App) appRootAbs() string {
-	root := strings.TrimSpace(a.appRoot)
-	if root == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			root = cwd
-		}
-	}
-	if root == "" {
-		return ""
-	}
-	if abs, err := filepath.Abs(root); err == nil {
-		return abs
-	}
-	return root
+	return apppath.InstallRoot(a.appRoot)
+}
+
+// appStateRootAbs 返回应用可写状态目录的绝对路径。
+func (a *App) appStateRootAbs() string {
+	return apppath.StateRoot(a.appRoot)
 }
 
 // appDataDir 返回 data 根目录绝对路径。

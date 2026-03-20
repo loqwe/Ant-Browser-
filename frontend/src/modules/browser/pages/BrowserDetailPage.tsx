@@ -4,6 +4,7 @@ import { Copy, Globe, Play, RefreshCw, RotateCcw, Square } from 'lucide-react'
 import { Badge, Button, Card, Input, Table, toast } from '../../../shared/components'
 import type { TableColumn } from '../../../shared/components/Table'
 import type { BrowserProfile, BrowserTab } from '../types'
+import { EventsOn } from '../../../wailsjs/runtime/runtime'
 import {
   fetchBrowserProfiles,
   fetchBrowserTabs,
@@ -39,11 +40,13 @@ export function BrowserDetailPage() {
   const [tabs, setTabs] = useState<BrowserTab[]>([])
   const [targetUrl, setTargetUrl] = useState('https://example.com')
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
+  const [pendingAction, setPendingAction] = useState<'starting' | 'stopping' | 'restarting' | null>(null)
 
   const loadProfile = async () => {
     const list = await fetchBrowserProfiles()
     const current = list.find(item => item.profileId === id) || null
     setProfile(current)
+    return current
   }
 
   const loadTabs = async () => {
@@ -52,8 +55,37 @@ export function BrowserDetailPage() {
     setTabs(list)
   }
 
-  useEffect(() => { loadProfile() }, [id])
-  useEffect(() => { loadTabs() }, [id])
+  useEffect(() => { void loadProfile() }, [id])
+  useEffect(() => { void loadTabs() }, [id])
+
+  useEffect(() => {
+    if (!id) return
+
+    const handleRuntimeChange = (payload: any) => {
+      const profileId = typeof payload === 'string' ? payload : payload?.profileId
+      if (profileId !== id) return
+
+      setPendingAction(null)
+      void loadProfile()
+
+      if (typeof payload === 'string' || payload?.error) {
+        setTabs([])
+        return
+      }
+
+      void loadTabs()
+    }
+
+    const offStarted = EventsOn('browser:instance:started', handleRuntimeChange)
+    const offStopped = EventsOn('browser:instance:stopped', handleRuntimeChange)
+    const offCrashed = EventsOn('browser:instance:crashed', handleRuntimeChange)
+
+    return () => {
+      offStarted?.()
+      offStopped?.()
+      offCrashed?.()
+    }
+  }, [id])
 
   if (!profile) {
     return (
@@ -69,35 +101,50 @@ export function BrowserDetailPage() {
   }
 
   const handleStart = async () => {
+    setPendingAction('starting')
     try {
-      await startBrowserInstance(profile.profileId)
+      const startedProfile = await startBrowserInstance(profile.profileId)
+      if (startedProfile) {
+        setProfile(startedProfile)
+      }
       toast.success('实例已启动')
     } catch (error: any) {
       toast.error(resolveActionErrorMessage(error, '实例启动失败'))
     } finally {
-      loadProfile()
+      await loadProfile()
+      setPendingAction(null)
     }
   }
 
   const handleStop = async () => {
+    setPendingAction('stopping')
     try {
-      await stopBrowserInstance(profile.profileId)
+      const stoppedProfile = await stopBrowserInstance(profile.profileId)
+      if (stoppedProfile) {
+        setProfile(stoppedProfile)
+      }
       toast.success('实例已停止')
     } catch (error: any) {
       toast.error(resolveActionErrorMessage(error, '实例停止失败'))
     } finally {
-      loadProfile()
+      await loadProfile()
+      setPendingAction(null)
     }
   }
 
   const handleRestart = async () => {
+    setPendingAction('restarting')
     try {
-      await restartBrowserInstance(profile.profileId)
+      const restartedProfile = await restartBrowserInstance(profile.profileId)
+      if (restartedProfile) {
+        setProfile(restartedProfile)
+      }
       toast.success('实例已重启')
     } catch (error: any) {
       toast.error(resolveActionErrorMessage(error, '实例重启失败'))
     } finally {
-      loadProfile()
+      await loadProfile()
+      setPendingAction(null)
     }
   }
 
@@ -112,6 +159,11 @@ export function BrowserDetailPage() {
       ),
     },
   ]
+
+  const isStarting = pendingAction === 'starting'
+  const isStopping = pendingAction === 'stopping'
+  const isRestarting = pendingAction === 'restarting'
+  const isBusy = pendingAction !== null
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -240,17 +292,20 @@ export function BrowserDetailPage() {
 
           <Card title="快捷操作" subtitle="快速控制实例">
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={handleStart}>
-                <Play className="w-4 h-4" />
-                启动
-              </Button>
-              <Button size="sm" variant="secondary" onClick={handleStop}>
-                <Square className="w-4 h-4" />
-                停止
-              </Button>
-              <Button size="sm" variant="ghost" onClick={handleRestart}>
-                <RotateCcw className="w-4 h-4" />
-                重启
+              {profile.running ? (
+                <Button size="sm" variant="secondary" onClick={handleStop} loading={isStopping} disabled={isBusy && !isStopping}>
+                  {!isStopping && <Square className="w-4 h-4" />}
+                  {isStopping ? '停止中' : '停止'}
+                </Button>
+              ) : (
+                <Button size="sm" onClick={handleStart} loading={isStarting} disabled={isBusy && !isStarting}>
+                  {!isStarting && <Play className="w-4 h-4" />}
+                  {isStarting ? '启动中' : '启动'}
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" onClick={handleRestart} loading={isRestarting} disabled={isBusy && !isRestarting}>
+                {!isRestarting && <RotateCcw className="w-4 h-4" />}
+                {isRestarting ? '重启中' : '重启'}
               </Button>
             </div>
           </Card>

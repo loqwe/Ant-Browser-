@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"ant-chrome/backend/internal/fsutil"
 	"ant-chrome/backend/internal/logger"
 	"encoding/json"
 	"fmt"
@@ -11,13 +12,21 @@ import (
 	"github.com/google/uuid"
 )
 
+func normalizeProfileCoreID(coreId string) string {
+	coreId = strings.TrimSpace(coreId)
+	if strings.EqualFold(coreId, "default") {
+		return ""
+	}
+	return coreId
+}
+
 // GetCore 根据 coreId 获取内核配置
 func (m *Manager) GetCore(coreId string) (Core, bool) {
-	coreId = strings.TrimSpace(coreId)
+	coreId = normalizeProfileCoreID(coreId)
 	if coreId == "" {
 		return Core{}, false
 	}
-	for _, core := range m.Config.Browser.Cores {
+	for _, core := range m.ListCores() {
 		if strings.EqualFold(core.CoreId, coreId) {
 			return core, true
 		}
@@ -27,13 +36,14 @@ func (m *Manager) GetCore(coreId string) (Core, bool) {
 
 // GetDefaultCore 获取默认内核
 func (m *Manager) GetDefaultCore() (Core, bool) {
-	for _, core := range m.Config.Browser.Cores {
+	cores := m.ListCores()
+	for _, core := range cores {
 		if core.IsDefault {
 			return core, true
 		}
 	}
-	if len(m.Config.Browser.Cores) > 0 {
-		return m.Config.Browser.Cores[0], true
+	if len(cores) > 0 {
+		return cores[0], true
 	}
 	return Core{}, false
 }
@@ -46,13 +56,12 @@ func (m *Manager) ResolveCoreExecutable(core Core) (string, error) {
 	}
 
 	baseDir := m.ResolveRelativePath(corePath)
-
-	exePath := filepath.Join(baseDir, "chrome.exe")
-	if _, err := os.Stat(exePath); err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("浏览器内核目录无效：未找到 chrome.exe（%s）。请检查内核目录是否完整或重新下载内核", exePath)
-		}
-		return "", fmt.Errorf("浏览器内核目录不可访问：%s。原因：%v", exePath, err)
+	exePath, _, ok := FindCoreExecutable(baseDir)
+	if !ok {
+		return "", fmt.Errorf("浏览器内核目录无效：未找到可执行文件（候选：%s）。请检查内核目录是否完整或重新下载内核", strings.Join(CoreExecutableCandidates(), ", "))
+	}
+	if err := fsutil.EnsureExecutable(exePath); err != nil {
+		return "", fmt.Errorf("浏览器内核文件不可执行：%s。原因：%w。请检查文件权限或重新解压内核", exePath, err)
 	}
 
 	return exePath, nil
@@ -70,10 +79,12 @@ func (m *Manager) ValidateCorePath(corePath string) CoreValidateResult {
 	if _, err := os.Stat(baseDir); os.IsNotExist(err) {
 		return CoreValidateResult{Valid: false, Message: fmt.Sprintf("目录不存在: %s", baseDir)}
 	}
-
-	exePath := filepath.Join(baseDir, "chrome.exe")
-	if _, err := os.Stat(exePath); os.IsNotExist(err) {
-		return CoreValidateResult{Valid: false, Message: fmt.Sprintf("chrome.exe 不存在: %s", exePath)}
+	exePath, _, ok := FindCoreExecutable(baseDir)
+	if !ok {
+		return CoreValidateResult{Valid: false, Message: fmt.Sprintf("未找到浏览器可执行文件（候选：%s）", strings.Join(CoreExecutableCandidates(), ", "))}
+	}
+	if err := fsutil.ValidateExecutable(exePath); err != nil {
+		return CoreValidateResult{Valid: false, Message: fmt.Sprintf("浏览器可执行文件不可用：%v", err)}
 	}
 
 	return CoreValidateResult{Valid: true, Message: fmt.Sprintf("路径有效: %s", exePath)}
@@ -247,7 +258,7 @@ func (m *Manager) clearDefaultCore() {
 // ResolveChromeBinary 解析 Chrome 二进制路径（简化版）
 func (m *Manager) ResolveChromeBinary(profile *Profile) (string, error) {
 	log := logger.New("Browser")
-	coreId := strings.TrimSpace(profile.CoreId)
+	coreId := normalizeProfileCoreID(profile.CoreId)
 
 	var core Core
 	var found bool
@@ -313,8 +324,7 @@ func (m *Manager) GetChromeVersion(corePath string) string {
 func (m *Manager) CountInstancesByCore(coreId string) int {
 	coreId = strings.TrimSpace(coreId)
 	count := 0
-	for _, profile := range m.Config.Browser.Profiles {
-		profileCoreId := strings.TrimSpace(profile.CoreId)
+	countByCoreID := func(profileCoreId string) {
 		// 如果实例的 CoreId 为空，则使用默认内核
 		if profileCoreId == "" {
 			defaultCore, found := m.GetDefaultCore()
@@ -324,6 +334,17 @@ func (m *Manager) CountInstancesByCore(coreId string) int {
 		} else if strings.EqualFold(profileCoreId, coreId) {
 			count++
 		}
+	}
+
+	if len(m.Profiles) > 0 {
+		for _, profile := range m.Profiles {
+			countByCoreID(normalizeProfileCoreID(profile.CoreId))
+		}
+		return count
+	}
+
+	for _, profile := range m.Config.Browser.Profiles {
+		countByCoreID(normalizeProfileCoreID(profile.CoreId))
 	}
 	return count
 }

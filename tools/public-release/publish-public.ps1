@@ -15,6 +15,15 @@ Publish a sanitized snapshot to the public repository.
 
 .EXAMPLE
 .\tools\public-release\publish-public.ps1 -PublicRemote github -PublishRelease -PublishTag
+
+.EXAMPLE
+.\tools\public-release\publish-public.ps1 -CommitMessage "release: public snapshot 1.2.3"
+
+.EXAMPLE
+.\tools\public-release\publish-public.ps1 -Version 1.1.0 -PublishRelease -PublishTag
+
+.EXAMPLE
+.\tools\public-release\publish-public.ps1 -CommitMessageFile .\publish-message.txt
 #>
 param(
     [string]$Version,
@@ -49,7 +58,9 @@ param(
     [switch]$NonInteractive,
     [string]$CommitterName,
     [string]$CommitterEmail,
-    [switch]$IncludeSourceCommit
+    [switch]$IncludeSourceCommit,
+    [string]$CommitMessage,
+    [string]$CommitMessageFile
 )
 
 Set-StrictMode -Version Latest
@@ -68,6 +79,23 @@ function Get-TrimmedText {
         return ""
     }
     return $Value.Trim()
+}
+
+function Assert-VersionValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value,
+        [string]$Source = "publish version"
+    )
+
+    $trimmed = Get-TrimmedText $Value
+    if ($trimmed -eq "") {
+        throw "$Source cannot be empty."
+    }
+    if ($trimmed -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z\.-]+)?(?:\+[0-9A-Za-z\.-]+)?$') {
+        throw "$Source format is invalid: $trimmed. Expected examples: 1.1.0 or 1.1.0-beta.1"
+    }
+    return $trimmed
 }
 
 function Write-Step {
@@ -156,7 +184,7 @@ function Resolve-VersionValue {
 
     $explicit = Get-TrimmedText $ExplicitVersion
     if ($explicit -ne "") {
-        return $explicit
+        return Assert-VersionValue -Value $explicit -Source "publish version"
     }
 
     $wailsConfigPath = Join-Path $repoRoot "wails.json"
@@ -169,7 +197,7 @@ function Resolve-VersionValue {
     if ($resolvedVersion -eq "") {
         throw "Could not resolve productVersion from wails.json. Pass -Version explicitly."
     }
-    return $resolvedVersion
+    return Assert-VersionValue -Value $resolvedVersion -Source "wails.json productVersion"
 }
 
 function Resolve-CommitterIdentity {
@@ -309,6 +337,43 @@ function Build-CommitMessage {
         $lines += "source-commit: $SourceCommit"
     }
     return $lines -join "`n"
+}
+
+function Resolve-CommitMessage {
+    param(
+        [string]$ExplicitMessage,
+        [string]$ExplicitMessageFile,
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$DefaultMessageFactory
+    )
+
+    $message = Get-TrimmedText $ExplicitMessage
+    $messageFile = Get-TrimmedText $ExplicitMessageFile
+
+    if ($message -ne "" -and $messageFile -ne "") {
+        throw "Do not pass both -CommitMessage and -CommitMessageFile."
+    }
+
+    if ($messageFile -ne "") {
+        $resolvedPath = $messageFile
+        if (-not [System.IO.Path]::IsPathRooted($resolvedPath)) {
+            $resolvedPath = Join-Path $repoRoot $resolvedPath
+        }
+        if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf)) {
+            throw "Commit message file was not found: $resolvedPath"
+        }
+        $message = (Get-Content -LiteralPath $resolvedPath -Raw)
+        if ((Get-TrimmedText $message) -eq "") {
+            throw "Commit message file is empty: $resolvedPath"
+        }
+        return $message
+    }
+
+    if ($message -ne "") {
+        return $ExplicitMessage
+    }
+
+    return & $DefaultMessageFactory
 }
 
 function Invoke-GitCommit {
@@ -467,6 +532,30 @@ function Read-NumberChoice {
     }
 }
 
+function Resolve-InteractiveVersionValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DefaultVersion
+    )
+
+    $validatedDefault = Assert-VersionValue -Value $DefaultVersion -Source "default version"
+    while ($true) {
+        Write-Host ""
+        Write-Host "Publish version" -ForegroundColor Yellow
+        $response = Get-TrimmedText (Read-Host "Version [$validatedDefault]")
+        if ($response -eq "") {
+            return $validatedDefault
+        }
+
+        try {
+            return Assert-VersionValue -Value $response -Source "publish version"
+        }
+        catch {
+            Write-Host $_.Exception.Message -ForegroundColor Yellow
+        }
+    }
+}
+
 function Resolve-InteractivePublishScope {
     param(
         [Parameter(Mandatory = $true)]
@@ -614,7 +703,12 @@ if (-not $AllowDirtyWorkingTree) {
     Assert-CleanTrackedWorkingTree
 }
 
+$versionChoiceExplicit = $PSBoundParameters.ContainsKey("Version")
 $Version = Resolve-VersionValue -ExplicitVersion $Version
+if (-not $NonInteractive -and -not $versionChoiceExplicit) {
+    Write-Step "Resolving publish version"
+    $Version = Resolve-InteractiveVersionValue -DefaultVersion $Version
+}
 if ((Get-TrimmedText $PublicRemote) -eq "") {
     $PublicRemote = Resolve-DefaultPublicRemote
 }
@@ -661,6 +755,7 @@ Write-Host "Public remote: $publicUrl"
 Write-Host "Release branch: $(if ($shouldPublishRelease) { $releaseBranch } else { 'skipped' })"
 Write-Host "Tag: $(if ($shouldPublishTag) { $tagName } else { 'skipped' })"
 Write-Host "Committer: $($committer.Name) <$($committer.Email)>"
+Write-Host "Commit message: $(if ((Get-TrimmedText $CommitMessage) -ne "" -or (Get-TrimmedText $CommitMessageFile) -ne "") { 'custom' } else { 'default' })"
 if ($resolvedExcludePaths.Count -gt 0) {
     Write-Host "Excluded paths: $($resolvedExcludePaths -join ', ')"
 }
@@ -704,7 +799,13 @@ try {
         Write-Step "Checking required runtime files in snapshot"
         $requiredFiles = @(
             "bin/xray.exe",
-            "bin/sing-box.exe"
+            "bin/sing-box.exe",
+            "bin/linux-amd64/xray",
+            "bin/linux-amd64/sing-box",
+            "bin/linux-arm64/xray",
+            "bin/linux-arm64/sing-box",
+            "publish/runtime-manifest.json",
+            "publish/runtime-sources.json"
         )
         foreach ($file in $requiredFiles) {
             $path = Join-Path $snapshotDir $file
@@ -735,13 +836,18 @@ try {
         Sync-SnapshotToRepo -SnapshotDir $snapshotDir -RepoDir $workRepoDir
         Invoke-Git -Args @("add", "-A") | Out-Null
 
-        $targetMessage = Build-CommitMessage `
-            -Title "publish: $Version snapshot ($sourceShort)" `
-            -Channel $TargetBranch `
-            -VersionValue $Version `
-            -SourceRefValue $SourceRef `
-            -SourceCommit $sourceCommit `
-            -AppendSourceCommit:$IncludeSourceCommit
+        $targetMessage = Resolve-CommitMessage `
+            -ExplicitMessage $CommitMessage `
+            -ExplicitMessageFile $CommitMessageFile `
+            -DefaultMessageFactory {
+                Build-CommitMessage `
+                    -Title "publish: $Version snapshot ($sourceShort)" `
+                    -Channel $TargetBranch `
+                    -VersionValue $Version `
+                    -SourceRefValue $SourceRef `
+                    -SourceCommit $sourceCommit `
+                    -AppendSourceCommit:$IncludeSourceCommit
+            }
         Invoke-GitCommit -Message $targetMessage -AllowEmpty
 
         $publishedCommit = Get-FirstOutputLine -Lines (Invoke-Git -Args @("rev-parse", "HEAD")).Output

@@ -21,7 +21,8 @@ const sampleResponse = `{
   "profileId": "550e8400-e29b-41d4-a716-446655440000",
   "profileName": "账号 A",
   "pid": 12345,
-  "debugPort": 9222
+  "debugPort": 9222,
+  "cdpUrl": "http://127.0.0.1:19876"
 }`
 
 function buildSampleLogsRequest(baseUrl: string): string {
@@ -73,11 +74,11 @@ export function AutomationPage() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[var(--color-accent-muted)] text-[var(--color-accent)] text-xs font-medium mb-3">
-              <Bot className="w-3.5 h-3.5" /> 自动化（未完成）
+              <Bot className="w-3.5 h-3.5" /> 自动化接口
             </div>
             <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">外部脚本唤起接口</h1>
             <p className="text-sm text-[var(--color-text-secondary)] mt-2">
-              已支持通过 <code>浏览器 Code + 参数</code> 唤起实例，适合 Playwright、Selenium、自研调度器等自动化流程。
+              已支持通过本地 <code>HTTP + JSON</code> 协议唤起实例，并通过同一个固定端口暴露 CDP 入口。只要能发 HTTP 请求，和调用语言无关；Playwright、Selenium、自研调度器都只是接入方。
             </p>
             <p className="text-xs text-[var(--color-text-muted)] mt-2">
               当前 Launch 地址：<code>{launchBaseUrl}</code>
@@ -96,7 +97,8 @@ export function AutomationPage() {
 {sampleRequest}
         </pre>
         <div className="mt-3 text-sm text-[var(--color-text-secondary)] space-y-1">
-          <p><code>code</code>: 实例快捷码（必填）。</p>
+          <p><code>code</code> / <code>key</code>: 二选一即可；<code>code</code> 按 LaunchCode 精确匹配，<code>key</code> 按实例关键字优先精确、未命中时再模糊匹配。</p>
+          <p><code>matchMode</code>: 多命中时的行为控制，支持 <code>unique</code> / <code>first</code> / <code>all</code>；传 <code>key</code> 时默认 <code>first</code>。</p>
           <p><code>launchArgs</code>: 仅本次启动附加的 Chrome 启动参数（可选）。</p>
           <p><code>startUrls</code>: 启动后打开的页面列表（可选）。</p>
           <p><code>skipDefaultStartUrls</code>: 设为 <code>true</code> 时不追加系统默认起始页（可选）。</p>
@@ -105,7 +107,7 @@ export function AutomationPage() {
 
       <Card
         title="2) 响应结构"
-        subtitle="成功返回 pid + debugPort，可直接接 CDP"
+        subtitle="成功返回 pid + cdpUrl；外部统一使用固定端口接 CDP"
         actions={<CopyCodeButton text={sampleResponse} />}
       >
         <pre className="text-xs leading-relaxed font-mono text-[var(--color-text-primary)] bg-[var(--color-bg-secondary)] border border-[var(--color-border-muted)] rounded-lg p-3 overflow-x-auto">
@@ -130,7 +132,7 @@ export function AutomationPage() {
         <div className="flex items-start gap-2 text-sm text-[var(--color-text-secondary)]">
           <Rocket className="w-4 h-4 mt-0.5 text-[var(--color-accent)]" />
           <p>
-            当前页面是第一版占位，后续会补充自动化任务编排、模板脚本、连接状态监控等功能。
+            当前这部分接口已经可用，后续会继续补充自动化任务编排、模板脚本、连接状态监控等增强能力。
           </p>
         </div>
       </Card>

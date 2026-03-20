@@ -28,6 +28,15 @@ func TestValidateProxyConfigMissingProxyId(t *testing.T) {
 	}
 }
 
+func TestValidateProxyConfigMissingProxyIdFallbackToRawConfig(t *testing.T) {
+	ok, msg := ValidateProxyConfig("socks5://127.0.0.1:1080", []config.BrowserProxy{
+		{ProxyId: "p1", ProxyConfig: "http://127.0.0.1:7890"},
+	}, "missing-proxy")
+	if !ok {
+		t.Fatalf("expected fallback proxyConfig to pass, msg=%s", msg)
+	}
+}
+
 func TestValidateProxyConfigStandardProxy(t *testing.T) {
 	ok, msg := ValidateProxyConfig("socks5://127.0.0.1:1080", nil, "")
 	if !ok {

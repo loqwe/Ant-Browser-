@@ -1,35 +1,38 @@
 package browser
 
 import (
+	"ant-chrome/backend/internal/apppath"
 	"ant-chrome/backend/internal/config"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"sync"
 )
 
 // Profile 浏览器配置文件
 type Profile struct {
-	ProfileId       string   `json:"profileId"`
-	ProfileName     string   `json:"profileName"`
-	UserDataDir     string   `json:"userDataDir"`
-	CoreId          string   `json:"coreId"`
-	FingerprintArgs []string `json:"fingerprintArgs"`
-	ProxyId         string   `json:"proxyId"`
-	ProxyConfig     string   `json:"proxyConfig"`
-	LaunchArgs      []string `json:"launchArgs"`
-	Tags            []string `json:"tags"`
-	Keywords        []string `json:"keywords"`
-	GroupId         string   `json:"groupId"` // 所属分组ID
-	LaunchCode      string   `json:"launchCode"`
-	Running         bool     `json:"running"`
-	DebugPort       int      `json:"debugPort"`
-	Pid             int      `json:"pid"`
-	LastError       string   `json:"lastError"`
-	CreatedAt       string   `json:"createdAt"`
-	UpdatedAt       string   `json:"updatedAt"`
-	LastStartAt     string   `json:"lastStartAt"`
-	LastStopAt      string   `json:"lastStopAt"`
+	ProfileId          string   `json:"profileId"`
+	ProfileName        string   `json:"profileName"`
+	UserDataDir        string   `json:"userDataDir"`
+	CoreId             string   `json:"coreId"`
+	FingerprintArgs    []string `json:"fingerprintArgs"`
+	ProxyId            string   `json:"proxyId"`
+	ProxyConfig        string   `json:"proxyConfig"`
+	ProxyBindSourceID  string   `json:"proxyBindSourceId"`
+	ProxyBindSourceURL string   `json:"proxyBindSourceUrl"`
+	ProxyBindName      string   `json:"proxyBindName"`
+	ProxyBindUpdatedAt string   `json:"proxyBindUpdatedAt"`
+	LaunchArgs         []string `json:"launchArgs"`
+	Tags               []string `json:"tags"`
+	Keywords           []string `json:"keywords"`
+	GroupId            string   `json:"groupId"` // 所属分组ID
+	LaunchCode         string   `json:"launchCode"`
+	Running            bool     `json:"running"`
+	DebugPort          int      `json:"debugPort"`
+	Pid                int      `json:"pid"`
+	LastError          string   `json:"lastError"`
+	CreatedAt          string   `json:"createdAt"`
+	UpdatedAt          string   `json:"updatedAt"`
+	LastStartAt        string   `json:"lastStartAt"`
+	LastStopAt         string   `json:"lastStopAt"`
 }
 
 // ProfileInput 创建/更新配置文件的输入
@@ -160,15 +163,5 @@ func NewManager(cfg *config.Config, appRoot string) *Manager {
 // ResolveRelativePath 将相对路径解析为绝对路径（基于 AppRoot）。
 // 如果传入的已经是绝对路径则直接返回。
 func (m *Manager) ResolveRelativePath(p string) string {
-	if filepath.IsAbs(p) {
-		return p
-	}
-	if m.AppRoot != "" {
-		return filepath.Join(m.AppRoot, p)
-	}
-	// 兜底：使用 CWD
-	if cwd, err := os.Getwd(); err == nil {
-		return filepath.Join(cwd, p)
-	}
-	return p
+	return apppath.Resolve(m.AppRoot, p)
 }

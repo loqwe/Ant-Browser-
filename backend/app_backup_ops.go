@@ -68,11 +68,7 @@ func (a *App) BackupExportPackage() (map[string]interface{}, error) {
 		a.backupEmitExportProgress("error", 100, fmt.Sprintf("导出失败: %v", err))
 		return nil, err
 	}
-	appName := "Ant Browser"
-	if a.config != nil && strings.TrimSpace(a.config.App.Name) != "" {
-		appName = strings.TrimSpace(a.config.App.Name)
-	}
-	manifest := backup.BuildManifest(scope, appName, "1.0.0", time.Now())
+	manifest := backup.BuildManifest(scope, a.appName(), a.appVersion(), time.Now())
 	a.backupEmitExportProgress("preparing", 15, "开始写入备份包...")
 
 	includedEntries, skippedEntries, fileCount, err := backupWritePackageZip(savePath, scope, manifest, a.backupEmitExportProgressMeta)

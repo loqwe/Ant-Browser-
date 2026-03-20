@@ -36,7 +36,7 @@ func TestLaunchServerStartWithAutoPort(t *testing.T) {
 	}
 }
 
-func TestLaunchServerFallbackToRandomPortWhenPreferredIsBusy(t *testing.T) {
+func TestLaunchServerReturnsErrorWhenPreferredPortIsBusy(t *testing.T) {
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("占用端口失败: %v", err)
@@ -47,18 +47,10 @@ func TestLaunchServerFallbackToRandomPortWhenPreferredIsBusy(t *testing.T) {
 	svc := launchcode.NewLaunchCodeService(launchcode.NewMemoryLaunchCodeDAO())
 	srv := launchcode.NewLaunchServer(svc, nil, nil, busyPort)
 
-	if err := srv.Start(); err != nil {
-		t.Fatalf("Start 失败: %v", err)
-	}
-	defer func() {
-		_ = srv.Stop()
-	}()
-
-	actualPort := srv.Port()
-	if actualPort <= 0 {
-		t.Fatalf("随机回退端口无效: got=%d", actualPort)
-	}
-	if actualPort == busyPort {
-		t.Fatalf("期望回退到随机端口，但仍使用了被占用端口: %d", actualPort)
+	if err := srv.Start(); err == nil {
+		defer func() {
+			_ = srv.Stop()
+		}()
+		t.Fatalf("期望固定端口被占用时返回错误，但启动成功了: %d", busyPort)
 	}
 }

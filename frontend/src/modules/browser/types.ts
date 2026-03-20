@@ -6,6 +6,10 @@ export interface BrowserProfile {
   fingerprintArgs: string[]
   proxyId: string
   proxyConfig: string
+  proxyBindSourceId?: string
+  proxyBindSourceUrl?: string
+  proxyBindName?: string
+  proxyBindUpdatedAt?: string
   launchArgs: string[]
   tags: string[]
   keywords: string[]

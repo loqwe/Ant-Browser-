@@ -8,23 +8,8 @@ import (
 
 // GetProxyConfigById 根据代理 ID 获取代理配置
 func (m *Manager) GetProxyConfigById(proxyId string) (string, bool) {
-	proxyId = strings.TrimSpace(proxyId)
-	if proxyId == "" {
-		return "", false
-	}
-	if m.ProxyDAO != nil {
-		if list, err := m.ProxyDAO.List(); err == nil {
-			for _, item := range list {
-				if strings.EqualFold(item.ProxyId, proxyId) {
-					return strings.TrimSpace(item.ProxyConfig), true
-				}
-			}
-		}
-	}
-	for _, item := range m.Config.Browser.Proxies {
-		if strings.EqualFold(item.ProxyId, proxyId) {
-			return strings.TrimSpace(item.ProxyConfig), true
-		}
+	if proxy, ok := m.GetProxyByID(proxyId); ok {
+		return strings.TrimSpace(proxy.ProxyConfig), true
 	}
 	return "", false
 }

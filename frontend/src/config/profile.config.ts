@@ -59,11 +59,10 @@ export interface ProfilePageLocalConfig {
 
 export const profilePageConfig: ProfilePageLocalConfig = {
   remoteAuthor: {
-    // 当前先使用一个测试用不可达地址，验证超时/失败后回退默认资料的逻辑。
-    // 后续你补真实地址时，直接替换这里即可。
+    // 留空时直接使用本地默认资料；需要远程作者页时再替换为真实地址。
     // https://static.antblack.de/profile/author.json
     // https://raw.githubusercontent.com/<user>/<repo>/main/author.json
-    authorURL: 'http://10.255.255.1/profile-author.json',
+    authorURL: '',
     timeoutMs: 1000,
   },
   defaultAuthor: {
@@ -95,7 +94,7 @@ export const profilePageConfig: ProfilePageLocalConfig = {
       {
         name: '公众号',
         description: '微信搜索后即可关注',
-        detail: 'xxx',
+        detail: '整理中',
         icon: 'message-square',
       },
     ],
@@ -103,7 +102,7 @@ export const profilePageConfig: ProfilePageLocalConfig = {
   project: {
     name: projectConfig.name,
     introBadge: projectConfig.name,
-    introText: '是一个面向多账号隔离、代理绑定和本地环境管理的 Windows 桌面浏览器工具。',
+    introText: '是一个面向多账号隔离、代理绑定和本地环境管理的桌面浏览器工具。',
     techStack: ['Wails', 'React', 'TypeScript'],
     description: '项目当前聚焦浏览器实例隔离、代理池配置、浏览器内核管理、标签检索和快捷启动等核心能力，适合跨境电商、社媒运营、本地测试以及需要统一管理浏览器环境的团队场景。',
     actions: [

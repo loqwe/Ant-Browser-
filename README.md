@@ -1,9 +1,9 @@
 # Ant Browser
 
-> 面向多账号隔离、代理绑定和本地环境管理的 Windows 桌面浏览器工具。
+> 面向多账号隔离、代理绑定和本地环境管理的桌面浏览器工具（Windows / Linux）。
 
 [![Release](https://img.shields.io/github/v/release/black-ant/Ant-Browser?sort=semver)](https://github.com/black-ant/Ant-Browser/releases)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-blue)](https://github.com/black-ant/Ant-Browser/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue)](https://github.com/black-ant/Ant-Browser/releases)
 [![Issues](https://img.shields.io/github/issues/black-ant/Ant-Browser)](https://github.com/black-ant/Ant-Browser/issues)
 
 ## 推荐内核项目
@@ -16,11 +16,13 @@ Ant Browser 当前推荐配套使用的浏览器内核，来源于开源项目 [
 
 这个项目为 Ant Browser 的内核准备提供了直接可用的基础来源，这里先对原项目做明确推荐与致谢。
 
-Ant Browser 的目标很明确：在一台 Windows 设备上，帮助用户稳定管理多个彼此隔离的浏览器实例，并配合代理池、浏览器内核和快捷启动能力完成日常运营或测试工作。
+Ant Browser 的目标很明确：在一台桌面设备上，帮助用户稳定管理多个彼此隔离的浏览器实例，并配合代理池、浏览器内核和快捷启动能力完成日常运营或测试工作。
 
 ## 目录
 
 - [项目简介](#项目简介)
+- [近期更新](#近期更新)
+- [更新日志](CHANGELOG.md)
 - [核心特性](#核心特性)
 - [界面预览](#界面预览)
 - [快速开始](#快速开始)
@@ -46,6 +48,16 @@ Ant Browser 适合以下场景：
 - 给每个实例绑定独立代理
 - 统一管理浏览器内核、标签、关键字和快捷打开码
 - 在本地保存配置和运行数据，便于自主控制
+
+## 近期更新
+
+### 1.1.0 · 2026-03-19
+
+- 完善 Linux 支持：补齐 Linux 环境下的开发、打包、安装、启动与运行链路，并持续修复安装版启动与退出稳定性问题
+- 新增 SOCKS 代理测试支持：SOCKS 代理能力已进入测试阶段，后续会继续验证稳定性与兼容性
+- 实验性支持接口触发浏览器：支持通过接口启动浏览器实例，便于后续接入自动化流程
+
+完整历史版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 源码分支说明
 
@@ -111,7 +123,9 @@ Ant Browser 适合以下场景：
 
 ### 环境要求
 
-- 操作系统：Windows 10 / Windows 11（64 位）
+- 操作系统：
+  - Windows 10 / 11（64 位）
+  - Linux（amd64 / arm64）
 - 建议内存：8 GB 及以上
 - 建议磁盘空间：2 GB 以上
 
@@ -120,13 +134,27 @@ Ant Browser 适合以下场景：
 1. 前往 Releases 页面下载最新版本：<https://github.com/black-ant/Ant-Browser/releases>
 2. 安装版直接运行 `AntBrowser-Setup-*.exe`
 3. 便携版解压后运行 `ant-chrome.exe`
+4. Linux 包下载后可直接安装 `ant-browser_<version>_<arch>.deb`，或解压 `tar.gz` 后运行 `ant-chrome`
 
 ### 从源码运行
 
 1. 开发默认使用 `master` 分支；该分支不带测试用户数据，适合作为日常开发基线。
 2. 如需带测试库的演示环境，请切换到 `user_data` 分支。
-3. 执行 `bat\dev.bat` 或直接使用 `wails dev` 启动项目。
-4. 仓库已内置 `bin/xray.exe` 和 `bin/sing-box.exe`，不需要额外下载代理运行时。
+3. Windows 执行 `bat\dev.bat`；Linux 直接执行 `wails dev` 启动项目。
+4. Windows 运行时使用 `bin/xray.exe`、`bin/sing-box.exe`；Linux 运行时使用 `bin/linux-<arch>/xray`、`bin/linux-<arch>/sing-box`。
+5. 运行时文件采用“仓库固定 + 哈希校验”，校验清单在 `publish/runtime-manifest.json`，固定来源清单在 `publish/runtime-sources.json`。
+6. 如需刷新 Linux 运行时，执行 `python3 tools/runtime/sync-runtime.py`（会按固定来源下载、校验归档并更新 manifest）。
+
+### Linux 发布打包（源码）
+
+Linux 发布脚本位于 `publish/linux/`。
+
+```bash
+bash publish/linux/publish-linux.sh --arch amd64
+bash publish/linux/publish-linux.sh --arch arm64
+```
+
+详细说明见 [publish/linux/README.md](publish/linux/README.md)。
 
 ### 准备浏览器内核
 

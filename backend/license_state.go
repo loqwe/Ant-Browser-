@@ -1,6 +1,7 @@
 package backend
 
 import (
+	appconfig "ant-chrome/backend/internal/config"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -80,7 +81,7 @@ func reconcileConfigWithLocalLicense(configPath string, cfg *Config) (bool, bool
 
 	mergedKeys := unionUsedCDKeys(originalKeys, state.UsedCDKeys)
 	effectiveMax := maxInt(originalMax, state.MaxProfileLimit)
-	minLimit := minimumProfileLimitForKeys(mergedKeys)
+	minLimit := appconfig.MinimumProfileLimitForUsedKeys(mergedKeys)
 	if effectiveMax < minLimit {
 		effectiveMax = minLimit
 	}
@@ -113,7 +114,7 @@ func normalizeLocalLicenseState(state *localLicenseState) {
 		return
 	}
 	state.UsedCDKeys = normalizeUsedCDKeys(state.UsedCDKeys)
-	minLimit := minimumProfileLimitForKeys(state.UsedCDKeys)
+	minLimit := appconfig.MinimumProfileLimitForUsedKeys(state.UsedCDKeys)
 	if state.MaxProfileLimit < minLimit {
 		state.MaxProfileLimit = minLimit
 	}
@@ -151,11 +152,6 @@ func unionUsedCDKeys(primary, secondary []string) []string {
 	appendKeys(primary)
 	appendKeys(secondary)
 	return result
-}
-
-func minimumProfileLimitForKeys(keys []string) int {
-	baseLimit := DefaultConfig().App.MaxProfileLimit
-	return baseLimit + len(normalizeUsedCDKeys(keys))*3
 }
 
 func sameStringSlice(a, b []string) bool {

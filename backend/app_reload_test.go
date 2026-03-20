@@ -38,7 +38,7 @@ func TestReloadConfigKeepsLocalLicenseState(t *testing.T) {
 		t.Fatalf("写入测试配置失败: %v", err)
 	}
 	if err := saveLocalLicenseState(filepath.Join(root, "config.yaml"), &localLicenseState{
-		MaxProfileLimit: 9,
+		MaxProfileLimit: config.GithubStarProfileTotal + config.StandardCDKeyProfileBonus,
 		UsedCDKeys:      []string{"ANT-AAAA-BBBB-CCCC-DDDD-EEEEEEEE", "GITHUB_STAR_REWARD"},
 	}); err != nil {
 		t.Fatalf("写入本机额度状态失败: %v", err)
@@ -51,7 +51,7 @@ func TestReloadConfigKeepsLocalLicenseState(t *testing.T) {
 		t.Fatalf("ReloadConfig 失败: %v", err)
 	}
 
-	if app.config.App.MaxProfileLimit != 9 {
+	if app.config.App.MaxProfileLimit != config.GithubStarProfileTotal+config.StandardCDKeyProfileBonus {
 		t.Fatalf("ReloadConfig 未恢复本机额度状态: got=%d", app.config.App.MaxProfileLimit)
 	}
 	if len(app.config.App.UsedCDKeys) != 2 {

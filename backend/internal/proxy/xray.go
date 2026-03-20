@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"ant-chrome/backend/internal/apppath"
 	"ant-chrome/backend/internal/config"
+	"ant-chrome/backend/internal/fsutil"
 	"ant-chrome/backend/internal/logger"
 	"crypto/sha256"
 	"encoding/hex"
@@ -62,7 +64,11 @@ func ValidateProxyConfig(proxyConfig string, proxies []config.BrowserProxy, prox
 			}
 		}
 		if !found {
-			return false, fmt.Sprintf("代理链路不可用：代理池节点已不存在（proxyId=%s）。可能因订阅刷新后节点下线或被删除，请重新选择代理后再启动。", proxyId)
+			// 兼容模式：如果 profile 内仍保留了可解析的 proxyConfig，则允许回退使用。
+			// 这样可兼容历史版本中 proxyId 失效后的启动流程，避免升级后强制手工重绑。
+			if src == "" {
+				return false, fmt.Sprintf("代理链路不可用：代理池节点已不存在（proxyId=%s）。可能因订阅刷新后节点下线或被删除，请重新选择代理后再启动。", proxyId)
+			}
 		}
 	}
 	if src == "" {
@@ -457,6 +463,9 @@ func (m *XrayManager) resolveBinary() (string, error) {
 		resolved := resolveEnvPath(configPath, m.AppRoot)
 		if resolved != "" {
 			if _, err := os.Stat(resolved); err == nil {
+				if err := fsutil.EnsureExecutable(resolved); err != nil {
+					return "", fmt.Errorf("xray 文件不可执行: %s: %w", resolved, err)
+				}
 				return resolved, nil
 			}
 		}
@@ -464,32 +473,56 @@ func (m *XrayManager) resolveBinary() (string, error) {
 	env := strings.TrimSpace(os.Getenv("XRAY_BINARY_PATH"))
 	if env != "" {
 		if _, err := os.Stat(env); err == nil {
+			if err := fsutil.EnsureExecutable(env); err != nil {
+				return "", fmt.Errorf("xray 文件不可执行: %s: %w", env, err)
+			}
 			return env, nil
 		}
 	}
-	// 优先基于 appRoot 查找 bin/xray.exe
-	if m.AppRoot != "" {
-		candidate := filepath.Join(m.AppRoot, "bin", "xray.exe")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	// 兜底：exe 目录
-	if exePath, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exePath), "bin", "xray.exe")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	if path, err := exec.LookPath("xray"); err == nil {
-		return path, nil
-	}
+
+	binaryNames := []string{"xray"}
 	if goruntime.GOOS == "windows" {
-		if path, err := exec.LookPath("xray.exe"); err == nil {
+		binaryNames = []string{"xray.exe", "xray"}
+	}
+	platformDir := fmt.Sprintf("%s-%s", goruntime.GOOS, goruntime.GOARCH)
+
+	searchDirs := make([]string, 0, 4)
+	if m.AppRoot != "" {
+		searchDirs = append(searchDirs,
+			filepath.Join(m.AppRoot, "bin", platformDir),
+			filepath.Join(m.AppRoot, "bin"),
+		)
+	}
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		searchDirs = append(searchDirs,
+			filepath.Join(exeDir, "bin", platformDir),
+			filepath.Join(exeDir, "bin"),
+		)
+	}
+
+	for _, dir := range searchDirs {
+		for _, name := range binaryNames {
+			candidate := filepath.Join(dir, name)
+			if _, err := os.Stat(candidate); err == nil {
+				if err := fsutil.EnsureExecutable(candidate); err != nil {
+					return "", fmt.Errorf("xray 文件不可执行: %s: %w", candidate, err)
+				}
+				return candidate, nil
+			}
+		}
+	}
+
+	for _, name := range binaryNames {
+		if path, err := exec.LookPath(name); err == nil {
+			if err := fsutil.EnsureExecutable(path); err != nil {
+				return "", fmt.Errorf("xray 文件不可执行: %s: %w", path, err)
+			}
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("未找到 xray.exe。请将 xray.exe 放到 bin/ 目录，或在配置中设置 XrayBinaryPath")
+
+	return "", fmt.Errorf("未找到 xray 可执行文件。请将 xray 放到 bin/%s/ 或 bin/ 目录，或在配置中设置 XrayBinaryPath", platformDir)
 }
 
 // parseDnsConfig 解析 DNS 配置，支持两种格式：
@@ -627,11 +660,7 @@ func (m *XrayManager) resolveWorkdir(key string) string {
 		root = "data"
 	}
 	if !filepath.IsAbs(root) {
-		if m.AppRoot != "" {
-			root = filepath.Join(m.AppRoot, root)
-		} else if exePath, err := os.Executable(); err == nil {
-			root = filepath.Join(filepath.Dir(exePath), root)
-		}
+		root = apppath.Resolve(m.AppRoot, root)
 	}
 	return filepath.Join(root, "_xray", key)
 }
@@ -650,7 +679,7 @@ func normalizeNodeScheme(src string) string {
 }
 
 func resolveEnvPath(path string, appRoot string) string {
-	path = strings.TrimSpace(path)
+	path = fsutil.NormalizePathInput(path)
 	if path == "" {
 		return ""
 	}

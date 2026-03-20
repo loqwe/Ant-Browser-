@@ -14,6 +14,7 @@ import (
 type mockStarterWithParams struct {
 	profiles    map[string]*browser.Profile
 	lastProfile string
+	started     []string
 	lastParams  launchcode.LaunchRequestParams
 }
 
@@ -27,6 +28,7 @@ func (m *mockStarterWithParams) addProfile(p *browser.Profile) {
 
 func (m *mockStarterWithParams) StartInstance(profileId string) (*browser.Profile, error) {
 	m.lastProfile = profileId
+	m.started = append(m.started, profileId)
 	p, ok := m.profiles[profileId]
 	if !ok {
 		return nil, http.ErrMissingFile
@@ -36,6 +38,7 @@ func (m *mockStarterWithParams) StartInstance(profileId string) (*browser.Profil
 
 func (m *mockStarterWithParams) StartInstanceWithParams(profileId string, params launchcode.LaunchRequestParams) (*browser.Profile, error) {
 	m.lastProfile = profileId
+	m.started = append(m.started, profileId)
 	m.lastParams = params
 	p, ok := m.profiles[profileId]
 	if !ok {
@@ -78,6 +81,102 @@ func TestLaunchWithParams(t *testing.T) {
 	}
 	if starter.lastProfile != "profile-automation" {
 		t.Fatalf("profileId 传递错误: %s", starter.lastProfile)
+	}
+	if len(starter.lastParams.LaunchArgs) != 2 {
+		t.Fatalf("launchArgs 传递错误: %+v", starter.lastParams.LaunchArgs)
+	}
+	if len(starter.lastParams.StartURLs) != 1 || starter.lastParams.StartURLs[0] != "https://example.com" {
+		t.Fatalf("startUrls 传递错误: %+v", starter.lastParams.StartURLs)
+	}
+	if !starter.lastParams.SkipDefaultStartURLs {
+		t.Fatal("skipDefaultStartUrls 传递错误")
+	}
+}
+
+func TestLaunchWithParamsUsingCodeAsKeywordFallback(t *testing.T) {
+	svc := newInMemoryService()
+	starter := newMockStarterWithParams()
+	profile := &browser.Profile{
+		ProfileId:   "profile-automation-keyword-fallback",
+		ProfileName: "automation-keyword-fallback",
+		Keywords:    []string{"buyer-001", "amazon"},
+		Pid:         654,
+		DebugPort:   9666,
+	}
+	starter.addProfile(profile)
+
+	manager := newSelectorTestManager(profile)
+	handler := buildTestHandlerWithManager(svc, starter, manager)
+	body := map[string]interface{}{
+		"code":                 "buyer-001",
+		"launchArgs":           []string{"--window-size=1280,800", "--lang=en-US"},
+		"startUrls":            []string{"https://example.com"},
+		"skipDefaultStartUrls": true,
+	}
+	payload, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/launch", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望 200，实际 %d，body=%s", w.Code, w.Body.String())
+	}
+	if starter.lastProfile != profile.ProfileId {
+		t.Fatalf("code 关键字兜底命中实例错误: got=%s want=%s", starter.lastProfile, profile.ProfileId)
+	}
+	if len(starter.lastParams.LaunchArgs) != 2 {
+		t.Fatalf("launchArgs 传递错误: %+v", starter.lastParams.LaunchArgs)
+	}
+	if len(starter.lastParams.StartURLs) != 1 || starter.lastParams.StartURLs[0] != "https://example.com" {
+		t.Fatalf("startUrls 传递错误: %+v", starter.lastParams.StartURLs)
+	}
+	if !starter.lastParams.SkipDefaultStartURLs {
+		t.Fatal("skipDefaultStartUrls 传递错误")
+	}
+}
+
+func TestLaunchWithParamsUsingCodeAsKeywordFallbackPrefersExactKeywordMatch(t *testing.T) {
+	svc := newInMemoryService()
+	starter := newMockStarterWithParams()
+	profileFuzzy := &browser.Profile{
+		ProfileId:   "profile-params-code-fuzzy",
+		ProfileName: "automation-fuzzy",
+		Keywords:    []string{"buyer-001-old", "amazon"},
+		Pid:         655,
+		DebugPort:   9667,
+	}
+	profileExact := &browser.Profile{
+		ProfileId:   "profile-params-code-exact",
+		ProfileName: "automation-exact",
+		Keywords:    []string{"buyer-001", "amazon"},
+		Pid:         656,
+		DebugPort:   9668,
+	}
+	starter.addProfile(profileFuzzy)
+	starter.addProfile(profileExact)
+
+	manager := newSelectorTestManager(profileFuzzy, profileExact)
+	handler := buildTestHandlerWithManager(svc, starter, manager)
+	body := map[string]interface{}{
+		"code":                 "buyer-001",
+		"launchArgs":           []string{"--window-size=1280,800", "--lang=en-US"},
+		"startUrls":            []string{"https://example.com"},
+		"skipDefaultStartUrls": true,
+	}
+	payload, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/launch", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("期望 200，实际 %d，body=%s", w.Code, w.Body.String())
+	}
+	if starter.lastProfile != profileExact.ProfileId {
+		t.Fatalf("code 关键字兜底应优先命中精确关键字实例: got=%s want=%s", starter.lastProfile, profileExact.ProfileId)
 	}
 	if len(starter.lastParams.LaunchArgs) != 2 {
 		t.Fatalf("launchArgs 传递错误: %+v", starter.lastParams.LaunchArgs)

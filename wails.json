@@ -2,20 +2,20 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "Ant Browser",
   "outputfilename": "ant-chrome",
-  "frontend:install": "npm install",
+  "frontend:install": "npm install && npm run ensure:native",
   "frontend:build": "npm run build",
-  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:watcher": "node ./scripts/dev-watcher.mjs",
   "frontend:dev:serverUrl": "http://127.0.0.1:5218",
   "author": {
     "name": "Ant Chrome Team",
-    "email": "team@example.com"
+    "email": "contact@antblack.de"
   },
   "info": {
     "companyName": "Ant Chrome",
     "productName": "Ant Browser",
-    "productVersion": "1.0.0",
-    "copyright": "Copyright © 2025",
-    "comments": "智能资讯聚合与AI处理平台"
+    "productVersion": "1.1.0",
+    "copyright": "Copyright © 2026",
+    "comments": "面向多账号隔离、代理绑定和本地环境管理的桌面浏览器工具"
   },
   "nsisType": "multiple",
   "obfuscated": false,

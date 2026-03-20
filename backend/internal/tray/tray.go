@@ -4,6 +4,7 @@ package tray
 
 import (
 	_ "embed"
+	"runtime"
 
 	"github.com/energye/systray"
 )
@@ -17,8 +18,12 @@ type Callbacks struct {
 	OnQuit func()
 }
 
-// Run 启动系统托盘（阻塞，需在独立 goroutine 中调用）
+// Run 启动系统托盘（阻塞，需在独立 goroutine 中调用）。
+// Windows 托盘依赖消息循环，必须固定在同一个 OS 线程上。
 func Run(cb Callbacks) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	systray.Run(func() {
 		systray.SetIcon(iconData)
 		systray.SetTitle("Ant Chrome")
@@ -37,6 +42,12 @@ func Run(cb Callbacks) {
 		systray.SetOnDClick(func(menu systray.IMenu) {
 			if cb.OnShow != nil {
 				cb.OnShow()
+			}
+		})
+
+		systray.SetOnRClick(func(menu systray.IMenu) {
+			if menu != nil {
+				_ = menu.ShowMenu()
 			}
 		})
 

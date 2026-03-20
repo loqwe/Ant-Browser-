@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"ant-chrome/backend/internal/apppath"
 	"ant-chrome/backend/internal/browser"
 	"ant-chrome/backend/internal/config"
 	"ant-chrome/backend/internal/database"
@@ -37,6 +38,7 @@ type App struct {
 	launchServer   *launchcode.LaunchServer
 	speedScheduler *browser.ProxySpeedScheduler
 	appRoot        string
+	version        string
 
 	forceQuit        bool       // 强制退出标志，用于跳过 OnBeforeClose 的拦截
 	maintenanceMu    sync.Mutex // 维护类操作（初始化/导入/导出）互斥锁
@@ -47,16 +49,42 @@ type App struct {
 }
 
 // NewApp 创建新的应用实例
-func NewApp(appRoot string) *App {
+func NewApp(appRoot string, appVersion ...string) *App {
+	version := ""
+	if len(appVersion) > 0 {
+		version = strings.TrimSpace(appVersion[0])
+	}
 	return &App{
 		appRoot:        strings.TrimSpace(appRoot),
+		version:        version,
 		xrayBridgeRefs: make(map[string]string),
 	}
+}
+
+func (a *App) appName() string {
+	if a.config != nil {
+		if name := strings.TrimSpace(a.config.App.Name); name != "" {
+			return name
+		}
+	}
+	return "Ant Browser"
+}
+
+func (a *App) appVersion() string {
+	version := strings.TrimSpace(a.version)
+	if version == "" {
+		return "unknown"
+	}
+	return version
 }
 
 // startup 应用启动时调用
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if err := apppath.EnsureWritableLayout(a.appRoot); err != nil {
+		runtime.LogFatal(ctx, fmt.Sprintf("初始化 Linux 用户数据目录失败: %v", err))
+		return
+	}
 	cfg, err := LoadConfig(a.resolveAppPath("config.yaml"))
 	if err != nil {
 		cfg = config.DefaultConfig()
@@ -84,10 +112,16 @@ func (a *App) startup(ctx context.Context) {
 
 	log := logger.New("App")
 	log.Info("应用启动中...",
-		logger.F("version", "1.0.0"),
+		logger.F("version", a.appVersion()),
 		logger.F("max_memory_mb", cfg.Runtime.MaxMemoryMB),
 		logger.F("gc_percent", cfg.Runtime.GCPercent),
 	)
+	if apppath.IsDetached(a.appRoot) {
+		log.Info("检测到安装目录需要只读运行，已切换到用户数据目录",
+			logger.F("install_root", apppath.InstallRoot(a.appRoot)),
+			logger.F("state_root", apppath.StateRoot(a.appRoot)),
+		)
+	}
 
 	// 确保 data 目录存在（存放数据库、用户数据、快照等）
 	if err := os.MkdirAll(a.resolveAppPath("data"), 0755); err != nil {
@@ -136,6 +170,7 @@ func (a *App) startup(ctx context.Context) {
 	a.browserMgr.InitData()
 	a.autoDetectCores()
 	a.loadProxies()
+	a.reconcileProfileProxyBindings()
 
 	// 初始化 LaunchCode 服务
 	launchCodeDAO := launchcode.NewSQLiteLaunchCodeDAO(a.db.GetConn())
@@ -161,8 +196,18 @@ func (a *App) startup(ctx context.Context) {
 	a.xrayMgr.OnBridgeDied = func(key string, err error) {
 		if a.ctx != nil {
 			runtime.EventsEmit(a.ctx, "proxy:bridge:died", map[string]interface{}{
-				"key":   key[:8],
-				"error": err.Error(),
+				"engine": "xray",
+				"key":    key[:8],
+				"error":  err.Error(),
+			})
+		}
+	}
+	a.singboxMgr.OnBridgeDied = func(key string, err error) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "proxy:bridge:died", map[string]interface{}{
+				"engine": "singbox",
+				"key":    key[:8],
+				"error":  err.Error(),
 			})
 		}
 	}
@@ -196,7 +241,9 @@ func (a *App) ReloadConfig() error {
 	// Update browser manager config reference
 	if a.browserMgr != nil {
 		a.browserMgr.Config = cfg
+		a.browserMgr.ListCores()
 		a.loadProxies()
+		a.reconcileProfileProxyBindings()
 	}
 	if a.xrayMgr != nil {
 		a.xrayMgr.Config = cfg
@@ -219,7 +266,10 @@ func (a *App) applyRuntimeConfig(cfg config.RuntimeConfig) {
 	if cfg.MaxMemoryMB > 0 {
 		maxMemoryBytes := int64(cfg.MaxMemoryMB) * 1024 * 1024
 		debug.SetMemoryLimit(maxMemoryBytes)
+		return
 	}
+	// 0 表示禁用自定义软限制，避免 ReloadConfig 后残留旧的 GOMEMLIMIT。
+	debug.SetMemoryLimit(1 << 60)
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -250,8 +300,19 @@ func Stop(a *App, ctx context.Context) {
 	a.shutdown(ctx)
 }
 
+func platformSupportsTrayCloseFlow() bool {
+	return platformSupportsTrayCloseFlowForOS(goruntime.GOOS)
+}
+
+func platformSupportsTrayCloseFlowForOS(goos string) bool {
+	return strings.EqualFold(strings.TrimSpace(goos), "windows")
+}
+
 func ShouldBlockClose(a *App, ctx context.Context) bool {
 	if a.forceQuit {
+		return false
+	}
+	if !platformSupportsTrayCloseFlow() {
 		return false
 	}
 	runtime.EventsEmit(ctx, "app:request-close")
@@ -318,11 +379,15 @@ func (a *App) GetDashboardStats() map[string]interface{} {
 		"proxyCount":       proxyCount,
 		"coreCount":        coreCount,
 		"memUsedMB":        int(memUsedMB),
+		"appVersion":       a.appVersion(),
 	}
 }
 
 func (a *App) GetAppConfig() map[string]interface{} {
-	return map[string]interface{}{"name": a.config.App.Name, "version": "1.0.0"}
+	return map[string]interface{}{
+		"name":    a.appName(),
+		"version": a.appVersion(),
+	}
 }
 
 func (a *App) GetMemoryStats() map[string]interface{} {
@@ -925,6 +990,7 @@ func (a *App) SaveBrowserProxies(proxies []BrowserProxy) error {
 			}
 		}
 		log.Info("代理列表已保存到数据库", logger.F("count", len(normalized)))
+		a.reconcileProfileProxyBindings()
 		return nil
 	}
 
@@ -933,6 +999,7 @@ func (a *App) SaveBrowserProxies(proxies []BrowserProxy) error {
 		log.Error("代理列表保存失败", logger.F("error", err))
 		return err
 	}
+	a.reconcileProfileProxyBindings()
 	return nil
 }
 
@@ -1107,19 +1174,27 @@ func (a *App) migrateToSQLite() {
 	if profiles, err := a.browserMgr.ProfileDAO.List(); err == nil && len(profiles) == 0 {
 		if len(a.config.Browser.Profiles) > 0 {
 			for _, pc := range a.config.Browser.Profiles {
+				coreId := strings.TrimSpace(pc.CoreId)
+				if strings.EqualFold(coreId, "default") {
+					coreId = ""
+				}
 				p := &browser.Profile{
-					ProfileId:       pc.ProfileId,
-					ProfileName:     pc.ProfileName,
-					UserDataDir:     pc.UserDataDir,
-					CoreId:          pc.CoreId,
-					FingerprintArgs: pc.FingerprintArgs,
-					ProxyId:         pc.ProxyId,
-					ProxyConfig:     pc.ProxyConfig,
-					LaunchArgs:      pc.LaunchArgs,
-					Tags:            pc.Tags,
-					Keywords:        pc.Keywords,
-					CreatedAt:       pc.CreatedAt,
-					UpdatedAt:       pc.UpdatedAt,
+					ProfileId:          pc.ProfileId,
+					ProfileName:        pc.ProfileName,
+					UserDataDir:        pc.UserDataDir,
+					CoreId:             coreId,
+					FingerprintArgs:    pc.FingerprintArgs,
+					ProxyId:            pc.ProxyId,
+					ProxyConfig:        pc.ProxyConfig,
+					ProxyBindSourceID:  pc.ProxyBindSourceID,
+					ProxyBindSourceURL: pc.ProxyBindSourceURL,
+					ProxyBindName:      pc.ProxyBindName,
+					ProxyBindUpdatedAt: pc.ProxyBindUpdatedAt,
+					LaunchArgs:         pc.LaunchArgs,
+					Tags:               pc.Tags,
+					Keywords:           pc.Keywords,
+					CreatedAt:          pc.CreatedAt,
+					UpdatedAt:          pc.UpdatedAt,
 				}
 				if err := a.browserMgr.ProfileDAO.Upsert(p); err != nil {
 					log.Error("实例迁移失败", logger.F("profile_id", pc.ProfileId), logger.F("error", err))
@@ -1132,7 +1207,7 @@ func (a *App) migrateToSQLite() {
 				ProfileId:       generateUUID(),
 				ProfileName:     "默认实例",
 				UserDataDir:     "default",
-				CoreId:          "default",
+				CoreId:          "",
 				FingerprintArgs: a.config.Browser.DefaultFingerprintArgs,
 				LaunchArgs:      a.config.Browser.DefaultLaunchArgs,
 				Tags:            []string{"默认"},

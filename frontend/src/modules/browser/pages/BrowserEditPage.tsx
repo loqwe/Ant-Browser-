@@ -53,10 +53,13 @@ export function BrowserEditPage() {
       const list = await fetchBrowserProfiles()
       const current = list.find(item => item.profileId === id)
       if (!current) return
+      const normalizedCoreId = !current.coreId || current.coreId.toLowerCase() === 'default'
+        ? ''
+        : current.coreId
       setFormData({
         profileName: current.profileName,
         userDataDir: current.userDataDir,
-        coreId: current.coreId,
+        coreId: normalizedCoreId,
         fingerprintArgs: current.fingerprintArgs,
         proxyId: current.proxyId,
         proxyConfig: current.proxyConfig,

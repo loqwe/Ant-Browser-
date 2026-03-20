@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"ant-chrome/backend/internal/apppath"
 	"ant-chrome/backend/internal/browser"
 	"ant-chrome/backend/internal/config"
 	"ant-chrome/backend/internal/logger"
@@ -20,16 +21,7 @@ import (
 // resolveAppPath 将相对路径解析为绝对路径（基于 appRoot）。
 // 如果传入的已经是绝对路径则直接返回。
 func (a *App) resolveAppPath(p string) string {
-	if filepath.IsAbs(p) {
-		return p
-	}
-	if a.appRoot != "" {
-		return filepath.Join(a.appRoot, p)
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		return filepath.Join(cwd, p)
-	}
-	return p
+	return apppath.Resolve(a.appRoot, p)
 }
 
 func generateUUID() string {
@@ -124,8 +116,8 @@ func (a *App) autoDetectCores() {
 	}
 }
 
-// scanChromeDir 扫描指定目录，将包含 chrome.exe 的子文件夹识别为内核。
-// 如果目录本身包含 chrome.exe（旧版单内核结构），则直接返回该目录作为内核。
+// scanChromeDir 扫描指定目录，将包含浏览器可执行文件的子文件夹识别为内核。
+// 如果目录本身包含可执行文件（旧版单内核结构），则直接返回该目录作为内核。
 func (a *App) scanChromeDir(chromeRoot string) []browser.Core {
 	log := logger.New("Browser")
 
@@ -135,8 +127,8 @@ func (a *App) scanChromeDir(chromeRoot string) []browser.Core {
 		return nil
 	}
 
-	// 如果根目录本身就有 chrome.exe，视为单内核结构
-	if _, err := os.Stat(filepath.Join(baseDir, "chrome.exe")); err == nil {
+	// 如果根目录本身就有浏览器可执行文件，视为单内核结构
+	if _, _, ok := browser.FindCoreExecutable(baseDir); ok {
 		return []browser.Core{
 			{
 				CoreId:    "default",
@@ -160,9 +152,9 @@ func (a *App) scanChromeDir(chromeRoot string) []browser.Core {
 			continue
 		}
 		subPath := filepath.Join(chromeRoot, entry.Name())
-		absExe := filepath.Join(baseDir, entry.Name(), "chrome.exe")
-		if _, err := os.Stat(absExe); err != nil {
-			continue // 没有 chrome.exe，跳过
+		absCoreDir := filepath.Join(baseDir, entry.Name())
+		if _, _, ok := browser.FindCoreExecutable(absCoreDir); !ok {
+			continue // 没有浏览器可执行文件，跳过
 		}
 		isDefault := len(cores) == 0
 		cores = append(cores, browser.Core{

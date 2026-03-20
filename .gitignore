@@ -23,10 +23,12 @@ pnpm-debug.log*
 .ant-license.json
 
 # Build outputs
-bin/
-build/bin/
+/bin/
+build/bin/*
+!build/bin/README.md
 build/dist/
-chrome/
+chrome/*
+!chrome/README.md
 *.exe
 *.dll
 *.so
@@ -34,8 +36,15 @@ chrome/
 
 # Runtime binaries (must be versioned for release/dev convenience)
 !/bin/
+!/bin/README.md
 !/bin/xray.exe
 !/bin/sing-box.exe
+!/bin/linux-amd64/
+!/bin/linux-amd64/xray
+!/bin/linux-amd64/sing-box
+!/bin/linux-arm64/
+!/bin/linux-arm64/xray
+!/bin/linux-arm64/sing-box
 
 # Publish artifacts
 publish/staging/
@@ -48,9 +57,11 @@ plan.md
 pic/
 
 # Runtime data
-data/
+data/*
+!data/README.md
 snapshots/
 app.db
+config.yaml.broken-*
 *.db
 *.sqlite
 *.sqlite3
@@ -61,6 +72,13 @@ profiles.yaml
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local runtime cache
+.tmp/runtime-cache/
 
 # Test outputs / coverage
 coverage/

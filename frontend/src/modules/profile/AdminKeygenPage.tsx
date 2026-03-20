@@ -94,7 +94,7 @@ export function AdminKeygenPage() {
                 <div className="space-y-6 animate-fade-in max-w-4xl mx-auto">
                     <div>
                         <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">系统核心管理 - CDKey 生成器</h1>
-                        <p className="text-sm text-[var(--color-text-muted)] mt-1">隐藏管理员工具。生成的每个兑换码均可为客户端增加 3 个永久额度。</p>
+                        <p className="text-sm text-[var(--color-text-muted)] mt-1">隐藏管理员工具。生成的每个兑换码均可为客户端增加 10 个永久额度。</p>
                     </div>
 
                     <Card>

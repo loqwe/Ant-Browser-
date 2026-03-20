@@ -1,13 +1,15 @@
 {
   "name": "ant-browser-frontend",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
+    "ensure:native": "node ./scripts/ensure-rollup-native.mjs",
+    "postinstall": "npm run ensure:native",
     "dev": "node ./scripts/dev-watcher.mjs",
-    "dev:raw": "cross-env NODE_OPTIONS=--max-old-space-size=500 vite",
-    "build": "cross-env NODE_OPTIONS=--max-old-space-size=1024 tsc && cross-env NODE_OPTIONS=--max-old-space-size=1024 vite build",
-    "preview": "cross-env NODE_OPTIONS=--max-old-space-size=500 vite preview"
+    "dev:raw": "npm run ensure:native && node --max-old-space-size=256 --max-semi-space-size=16 ./node_modules/vite/bin/vite.js",
+    "build": "npm run ensure:native && node --max-old-space-size=1024 ./node_modules/typescript/bin/tsc && node --max-old-space-size=1024 ./node_modules/vite/bin/vite.js build",
+    "preview": "npm run ensure:native && node --max-old-space-size=256 --max-semi-space-size=16 ./node_modules/vite/bin/vite.js preview"
   },
   "dependencies": {
     "@types/js-yaml": "^4.0.9",
@@ -27,7 +29,7 @@
   "devDependencies": {
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
-    "@vitejs/plugin-react": "^4.2.1",
+    "@vitejs/plugin-react-swc": "^4.3.0",
     "autoprefixer": "^10.4.16",
     "cross-env": "^10.1.0",
     "postcss": "^8.4.32",

@@ -15,7 +15,7 @@ func TestLoadConfigRestoresLocalLicenseState(t *testing.T) {
 		t.Fatalf("写入测试配置失败: %v", err)
 	}
 	if err := saveLocalLicenseState(configPath, &localLicenseState{
-		MaxProfileLimit: 12,
+		MaxProfileLimit: appconfig.GithubStarProfileTotal + appconfig.StandardCDKeyProfileBonus,
 		UsedCDKeys:      []string{"GITHUB_STAR_REWARD", "ANT-AAAA-BBBB-CCCC-DDDD-EEEEEEEE"},
 	}); err != nil {
 		t.Fatalf("写入本机额度状态失败: %v", err)
@@ -26,7 +26,7 @@ func TestLoadConfigRestoresLocalLicenseState(t *testing.T) {
 		t.Fatalf("LoadConfig 失败: %v", err)
 	}
 
-	if loaded.App.MaxProfileLimit != 12 {
+	if loaded.App.MaxProfileLimit != appconfig.GithubStarProfileTotal+appconfig.StandardCDKeyProfileBonus {
 		t.Fatalf("本机额度状态未恢复: got=%d", loaded.App.MaxProfileLimit)
 	}
 	if len(loaded.App.UsedCDKeys) != 2 {
@@ -39,7 +39,7 @@ func TestLoadConfigSeedsLocalLicenseStateFromConfig(t *testing.T) {
 	configPath := filepath.Join(root, "config.yaml")
 
 	cfg := appconfig.DefaultConfig()
-	cfg.App.MaxProfileLimit = 15
+	cfg.App.MaxProfileLimit = appconfig.GithubStarProfileTotal
 	cfg.App.UsedCDKeys = []string{"GITHUB_STAR_REWARD"}
 	if err := cfg.Save(configPath); err != nil {
 		t.Fatalf("写入测试配置失败: %v", err)
@@ -49,7 +49,7 @@ func TestLoadConfigSeedsLocalLicenseStateFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig 失败: %v", err)
 	}
-	if loaded.App.MaxProfileLimit != 15 {
+	if loaded.App.MaxProfileLimit != appconfig.GithubStarProfileTotal {
 		t.Fatalf("LoadConfig 读取额度失败: got=%d", loaded.App.MaxProfileLimit)
 	}
 
@@ -60,7 +60,7 @@ func TestLoadConfigSeedsLocalLicenseStateFromConfig(t *testing.T) {
 	if !exists {
 		t.Fatalf("应当从现有配置补建本机额度状态")
 	}
-	if state.MaxProfileLimit != 15 {
+	if state.MaxProfileLimit != appconfig.GithubStarProfileTotal {
 		t.Fatalf("本机额度状态未补建: got=%d", state.MaxProfileLimit)
 	}
 	if len(state.UsedCDKeys) != 1 || state.UsedCDKeys[0] != "GITHUB_STAR_REWARD" {
@@ -91,7 +91,7 @@ func TestRedeemGithubStarPersistsLocalLicenseState(t *testing.T) {
 	if !exists {
 		t.Fatalf("兑换后应写入本机额度状态")
 	}
-	if state.MaxProfileLimit != 6 {
+	if state.MaxProfileLimit != appconfig.GithubStarProfileTotal {
 		t.Fatalf("兑换后本机额度状态错误: got=%d", state.MaxProfileLimit)
 	}
 	if len(state.UsedCDKeys) != 1 || state.UsedCDKeys[0] != "GITHUB_STAR_REWARD" {

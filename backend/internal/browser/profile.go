@@ -43,6 +43,7 @@ func (m *Manager) loadProfiles() {
 		} else {
 			// SQLite 模式：无论是否为空都直接使用，不自动创建默认实例
 			for _, p := range profiles {
+				p.CoreId = normalizeProfileCoreID(p.CoreId)
 				m.Profiles[p.ProfileId] = p
 			}
 			if len(profiles) > 0 {
@@ -75,22 +76,26 @@ func (m *Manager) loadProfiles() {
 			updatedAt = createdAt
 		}
 		m.Profiles[profileId] = &Profile{
-			ProfileId:       profileId,
-			ProfileName:     item.ProfileName,
-			UserDataDir:     item.UserDataDir,
-			CoreId:          item.CoreId,
-			FingerprintArgs: append([]string{}, item.FingerprintArgs...),
-			ProxyId:         item.ProxyId,
-			ProxyConfig:     item.ProxyConfig,
-			LaunchArgs:      append([]string{}, item.LaunchArgs...),
-			Tags:            append([]string{}, item.Tags...),
-			Keywords:        append([]string{}, item.Keywords...),
-			Running:         false,
-			DebugPort:       0,
-			Pid:             0,
-			LastError:       "",
-			CreatedAt:       createdAt,
-			UpdatedAt:       updatedAt,
+			ProfileId:          profileId,
+			ProfileName:        item.ProfileName,
+			UserDataDir:        item.UserDataDir,
+			CoreId:             normalizeProfileCoreID(item.CoreId),
+			FingerprintArgs:    append([]string{}, item.FingerprintArgs...),
+			ProxyId:            item.ProxyId,
+			ProxyConfig:        item.ProxyConfig,
+			ProxyBindSourceID:  item.ProxyBindSourceID,
+			ProxyBindSourceURL: item.ProxyBindSourceURL,
+			ProxyBindName:      item.ProxyBindName,
+			ProxyBindUpdatedAt: item.ProxyBindUpdatedAt,
+			LaunchArgs:         append([]string{}, item.LaunchArgs...),
+			Tags:               append([]string{}, item.Tags...),
+			Keywords:           append([]string{}, item.Keywords...),
+			Running:            false,
+			DebugPort:          0,
+			Pid:                0,
+			LastError:          "",
+			CreatedAt:          createdAt,
+			UpdatedAt:          updatedAt,
 		}
 	}
 	log.Info("浏览器配置从文件加载完成", logger.F("count", len(m.Profiles)))
@@ -101,6 +106,7 @@ func (m *Manager) SaveProfiles() error {
 	log := logger.New("Browser")
 	if m.ProfileDAO != nil {
 		for _, profile := range m.Profiles {
+			profile.CoreId = normalizeProfileCoreID(profile.CoreId)
 			if err := m.ProfileDAO.Upsert(profile); err != nil {
 				log.Error("实例配置持久化失败", logger.F("profile_id", profile.ProfileId), logger.F("error", err))
 				return err
@@ -114,18 +120,22 @@ func (m *Manager) SaveProfiles() error {
 	profiles := make([]ProfileConfig, 0, len(m.Profiles))
 	for _, profile := range m.Profiles {
 		profiles = append(profiles, ProfileConfig{
-			ProfileId:       profile.ProfileId,
-			ProfileName:     profile.ProfileName,
-			UserDataDir:     profile.UserDataDir,
-			CoreId:          profile.CoreId,
-			FingerprintArgs: append([]string{}, profile.FingerprintArgs...),
-			ProxyId:         profile.ProxyId,
-			ProxyConfig:     profile.ProxyConfig,
-			LaunchArgs:      append([]string{}, profile.LaunchArgs...),
-			Tags:            append([]string{}, profile.Tags...),
-			Keywords:        append([]string{}, profile.Keywords...),
-			CreatedAt:       profile.CreatedAt,
-			UpdatedAt:       profile.UpdatedAt,
+			ProfileId:          profile.ProfileId,
+			ProfileName:        profile.ProfileName,
+			UserDataDir:        profile.UserDataDir,
+			CoreId:             normalizeProfileCoreID(profile.CoreId),
+			FingerprintArgs:    append([]string{}, profile.FingerprintArgs...),
+			ProxyId:            profile.ProxyId,
+			ProxyConfig:        profile.ProxyConfig,
+			ProxyBindSourceID:  profile.ProxyBindSourceID,
+			ProxyBindSourceURL: profile.ProxyBindSourceURL,
+			ProxyBindName:      profile.ProxyBindName,
+			ProxyBindUpdatedAt: profile.ProxyBindUpdatedAt,
+			LaunchArgs:         append([]string{}, profile.LaunchArgs...),
+			Tags:               append([]string{}, profile.Tags...),
+			Keywords:           append([]string{}, profile.Keywords...),
+			CreatedAt:          profile.CreatedAt,
+			UpdatedAt:          profile.UpdatedAt,
 		})
 	}
 	m.Config.Browser.Profiles = profiles
@@ -222,14 +232,18 @@ func (m *Manager) Create(input ProfileInput) (*Profile, error) {
 	}
 	proxyConfig := strings.TrimSpace(input.ProxyConfig)
 	proxyId := strings.TrimSpace(input.ProxyId)
+	selectedProxy := Proxy{}
+	hasSelectedProxy := false
 	if proxyId != "" {
-		if resolved, ok := m.GetProxyConfigById(proxyId); ok {
-			proxyConfig = resolved
+		if proxyItem, ok := m.GetProxyByID(proxyId); ok {
+			proxyConfig = strings.TrimSpace(proxyItem.ProxyConfig)
+			selectedProxy = proxyItem
+			hasSelectedProxy = true
 		} else {
 			log.Error("代理绑定失败", logger.F("profile_id", profileId), logger.F("proxy_id", proxyId))
 		}
 	}
-	coreId := strings.TrimSpace(input.CoreId)
+	coreId := normalizeProfileCoreID(input.CoreId)
 	if coreId == "" {
 		if defaultCore, ok := m.GetDefaultCore(); ok {
 			coreId = defaultCore.CoreId
@@ -257,6 +271,9 @@ func (m *Manager) Create(input ProfileInput) (*Profile, error) {
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
+	if hasSelectedProxy {
+		_ = BindProfileToProxy(profile, selectedProxy, true)
+	}
 	m.Profiles[profileId] = profile
 	log.Info("浏览器配置创建", logger.F("profile_id", profileId), logger.F("profile_name", input.ProfileName))
 	if err := m.SaveProfiles(); err != nil {
@@ -283,18 +300,18 @@ func (m *Manager) Update(profileId string, input ProfileInput) (*Profile, error)
 	}
 	profile.ProfileName = input.ProfileName
 	profile.UserDataDir = input.UserDataDir
-	profile.CoreId = input.CoreId
+	profile.CoreId = normalizeProfileCoreID(input.CoreId)
 	profile.FingerprintArgs = input.FingerprintArgs
 	profile.ProxyId = strings.TrimSpace(input.ProxyId)
 	if profile.ProxyId != "" {
-		if resolved, ok := m.GetProxyConfigById(profile.ProxyId); ok {
-			profile.ProxyConfig = resolved
+		if proxyItem, ok := m.GetProxyByID(profile.ProxyId); ok {
+			_ = BindProfileToProxy(profile, proxyItem, true)
 		} else {
-			profile.ProxyConfig = ""
 			log.Error("代理绑定失败", logger.F("profile_id", profileId), logger.F("proxy_id", profile.ProxyId))
 		}
 	} else {
 		profile.ProxyConfig = input.ProxyConfig
+		_ = ClearProfileProxyBinding(profile)
 	}
 	profile.LaunchArgs = input.LaunchArgs
 	profile.Tags = input.Tags
@@ -351,20 +368,29 @@ func (m *Manager) ApplyDefaults(profile *Profile) bool {
 	if strings.TrimSpace(profile.UserDataDir) == "" {
 		profile.UserDataDir = profile.ProfileId
 	}
-	if strings.TrimSpace(profile.CoreId) == "" {
+	profile.CoreId = normalizeProfileCoreID(profile.CoreId)
+	if profile.CoreId == "" {
 		if defaultCore, ok := m.GetDefaultCore(); ok {
 			profile.CoreId = defaultCore.CoreId
 		}
 	}
 	proxyChanged := false
-	if profile.ProxyId != "" {
-		if proxyConfig, ok := m.GetProxyConfigById(profile.ProxyId); ok {
-			if proxyConfig != "" && profile.ProxyConfig != proxyConfig {
-				profile.ProxyConfig = proxyConfig
-				proxyChanged = true
-			}
-		} else {
+	bindChanged, boundInPool, bindMode := m.ResolveProfileProxyBinding(profile)
+	if bindChanged {
+		proxyChanged = true
+	}
+	if bindMode != "" && bindMode != "proxy_id" {
+		log.Info("实例代理自动重关联",
+			logger.F("profile_id", profile.ProfileId),
+			logger.F("proxy_id", profile.ProxyId),
+			logger.F("mode", bindMode),
+		)
+	}
+	if profile.ProxyId != "" && !boundInPool {
+		if strings.TrimSpace(profile.ProxyConfig) == "" {
 			log.Error("实例代理未找到", logger.F("profile_id", profile.ProfileId), logger.F("proxy_id", profile.ProxyId))
+		} else {
+			log.Warn("实例代理未找到，回退使用历史代理配置", logger.F("profile_id", profile.ProfileId), logger.F("proxy_id", profile.ProxyId))
 		}
 	}
 	if profile.ProxyConfig == "" && m.Config.Browser.DefaultProxy != "" {
@@ -404,23 +430,27 @@ func (m *Manager) Copy(profileId string, newName string) (*Profile, error) {
 
 	// 复制配置，指纹参数使用默认值（新种子）
 	profile := &Profile{
-		ProfileId:       newId,
-		ProfileName:     profileName,
-		UserDataDir:     newId, // 新的用户数据目录
-		CoreId:          src.CoreId,
-		FingerprintArgs: append([]string{}, m.Config.Browser.DefaultFingerprintArgs...), // 使用默认指纹（新种子）
-		ProxyId:         src.ProxyId,
-		ProxyConfig:     src.ProxyConfig,
-		LaunchArgs:      append([]string{}, src.LaunchArgs...),
-		Tags:            append([]string{}, src.Tags...),
-		Keywords:        append([]string{}, src.Keywords...),
-		GroupId:         src.GroupId, // 复制分组
-		Running:         false,
-		DebugPort:       0,
-		Pid:             0,
-		LastError:       "",
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ProfileId:          newId,
+		ProfileName:        profileName,
+		UserDataDir:        newId, // 新的用户数据目录
+		CoreId:             normalizeProfileCoreID(src.CoreId),
+		FingerprintArgs:    append([]string{}, m.Config.Browser.DefaultFingerprintArgs...), // 使用默认指纹（新种子）
+		ProxyId:            src.ProxyId,
+		ProxyConfig:        src.ProxyConfig,
+		ProxyBindSourceID:  src.ProxyBindSourceID,
+		ProxyBindSourceURL: src.ProxyBindSourceURL,
+		ProxyBindName:      src.ProxyBindName,
+		ProxyBindUpdatedAt: src.ProxyBindUpdatedAt,
+		LaunchArgs:         append([]string{}, src.LaunchArgs...),
+		Tags:               append([]string{}, src.Tags...),
+		Keywords:           append([]string{}, src.Keywords...),
+		GroupId:            src.GroupId, // 复制分组
+		Running:            false,
+		DebugPort:          0,
+		Pid:                0,
+		LastError:          "",
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 
 	m.Profiles[newId] = profile

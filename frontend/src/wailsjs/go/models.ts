@@ -400,6 +400,10 @@ export namespace browser {
 	    fingerprintArgs: string[];
 	    proxyId: string;
 	    proxyConfig: string;
+	    proxyBindSourceId: string;
+	    proxyBindSourceUrl: string;
+	    proxyBindName: string;
+	    proxyBindUpdatedAt: string;
 	    launchArgs: string[];
 	    tags: string[];
 	    keywords: string[];
@@ -427,6 +431,10 @@ export namespace browser {
 	        this.fingerprintArgs = source["fingerprintArgs"];
 	        this.proxyId = source["proxyId"];
 	        this.proxyConfig = source["proxyConfig"];
+	        this.proxyBindSourceId = source["proxyBindSourceId"];
+	        this.proxyBindSourceUrl = source["proxyBindSourceUrl"];
+	        this.proxyBindName = source["proxyBindName"];
+	        this.proxyBindUpdatedAt = source["proxyBindUpdatedAt"];
 	        this.launchArgs = source["launchArgs"];
 	        this.tags = source["tags"];
 	        this.keywords = source["keywords"];

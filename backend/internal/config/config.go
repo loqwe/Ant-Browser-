@@ -9,9 +9,49 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	DefaultMaxProfileLimit    = 20
+	StandardCDKeyProfileBonus = 10
+	GithubStarRewardKey       = "GITHUB_STAR_REWARD"
+	GithubStarProfileBonus    = 50
+	GithubStarProfileTotal    = DefaultMaxProfileLimit + GithubStarProfileBonus
+	DefaultLaunchServerPort   = 19876
+)
+
+// RewardForUsedKey 返回指定兑换记录对应的永久额度奖励。
+func RewardForUsedKey(key string) int {
+	normalized := strings.ToUpper(strings.TrimSpace(key))
+	if normalized == "" {
+		return 0
+	}
+	if normalized == GithubStarRewardKey {
+		return GithubStarProfileBonus
+	}
+	return StandardCDKeyProfileBonus
+}
+
+// MinimumProfileLimitForUsedKeys 根据兑换记录计算最低应得实例额度。
+func MinimumProfileLimitForUsedKeys(keys []string) int {
+	limit := DefaultMaxProfileLimit
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		normalized := strings.ToUpper(strings.TrimSpace(key))
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		limit += RewardForUsedKey(normalized)
+	}
+	return limit
+}
+
 // LaunchServerConfig Launch HTTP 服务配置
 type LaunchServerConfig struct {
-	// Port <= 0 时自动分配随机可用端口（推荐）。
+	// Port 为对外暴露的固定入口端口。
+	// Launch API 与 CDP 代理共用此端口，便于外部工具固定接入。
 	Port int `yaml:"port"`
 }
 
@@ -54,7 +94,7 @@ type WindowConfig struct {
 
 // RuntimeConfig 运行时配置
 type RuntimeConfig struct {
-	MaxMemoryMB int `yaml:"max_memory_mb"` // 最大内存限制（MB）
+	MaxMemoryMB int `yaml:"max_memory_mb"` // 最大内存软限制（MB），0 表示禁用
 	GCPercent   int `yaml:"gc_percent"`    // GC 触发百分比
 }
 
@@ -123,18 +163,22 @@ type BrowserEnvironment struct {
 }
 
 type BrowserProfileConfig struct {
-	ProfileId       string   `yaml:"profile_id" json:"profileId"`
-	ProfileName     string   `yaml:"profile_name" json:"profileName"`
-	UserDataDir     string   `yaml:"user_data_dir" json:"userDataDir"`
-	CoreId          string   `yaml:"core_id" json:"coreId"`
-	FingerprintArgs []string `yaml:"fingerprint_args" json:"fingerprintArgs"`
-	ProxyId         string   `yaml:"proxy_id" json:"proxyId"`
-	ProxyConfig     string   `yaml:"proxy_config" json:"proxyConfig"`
-	LaunchArgs      []string `yaml:"launch_args" json:"launchArgs"`
-	Tags            []string `yaml:"tags" json:"tags"`
-	Keywords        []string `yaml:"keywords,omitempty" json:"keywords,omitempty"`
-	CreatedAt       string   `yaml:"created_at" json:"createdAt"`
-	UpdatedAt       string   `yaml:"updated_at" json:"updatedAt"`
+	ProfileId          string   `yaml:"profile_id" json:"profileId"`
+	ProfileName        string   `yaml:"profile_name" json:"profileName"`
+	UserDataDir        string   `yaml:"user_data_dir" json:"userDataDir"`
+	CoreId             string   `yaml:"core_id" json:"coreId"`
+	FingerprintArgs    []string `yaml:"fingerprint_args" json:"fingerprintArgs"`
+	ProxyId            string   `yaml:"proxy_id" json:"proxyId"`
+	ProxyConfig        string   `yaml:"proxy_config" json:"proxyConfig"`
+	ProxyBindSourceID  string   `yaml:"proxy_bind_source_id,omitempty" json:"proxyBindSourceId,omitempty"`
+	ProxyBindSourceURL string   `yaml:"proxy_bind_source_url,omitempty" json:"proxyBindSourceUrl,omitempty"`
+	ProxyBindName      string   `yaml:"proxy_bind_name,omitempty" json:"proxyBindName,omitempty"`
+	ProxyBindUpdatedAt string   `yaml:"proxy_bind_updated_at,omitempty" json:"proxyBindUpdatedAt,omitempty"`
+	LaunchArgs         []string `yaml:"launch_args" json:"launchArgs"`
+	Tags               []string `yaml:"tags" json:"tags"`
+	Keywords           []string `yaml:"keywords,omitempty" json:"keywords,omitempty"`
+	CreatedAt          string   `yaml:"created_at" json:"createdAt"`
+	UpdatedAt          string   `yaml:"updated_at" json:"updatedAt"`
 }
 
 // LoggingConfig 日志配置
@@ -223,17 +267,9 @@ func normalizeConfig(config *Config) {
 		config.App.UsedCDKeys = []string{}
 	}
 
-	// 兼容老版本配置: 如果之前没有 max_profile_limit，它会被解析成 0，
-	// 若用户在 0 状态下兑换了额度（比如 0+3=3），基础的 3 额度会被覆盖。
-	// 这里通过统计兑换记录重新保底验证它的额度即可修复。
-	expectedLimit := defaultConfig.App.MaxProfileLimit
-	for _, k := range config.App.UsedCDKeys {
-		if k == "GITHUB_STAR_REWARD" {
-			expectedLimit += 3
-		} else {
-			expectedLimit += 3
-		}
-	}
+	// 兼容老版本/损坏配置：若 max_profile_limit 缺失或被写成过小值，
+	// 通过兑换记录重新计算最低应得额度，避免基础额度或奖励额度丢失。
+	expectedLimit := MinimumProfileLimitForUsedKeys(config.App.UsedCDKeys)
 	if config.App.MaxProfileLimit < expectedLimit {
 		config.App.MaxProfileLimit = expectedLimit
 	}
@@ -308,7 +344,7 @@ func normalizeConfig(config *Config) {
 		config.Browser.Profiles = []BrowserProfileConfig{}
 	}
 
-	if config.LaunchServer.Port < 0 {
+	if config.LaunchServer.Port <= 0 {
 		config.LaunchServer.Port = defaultConfig.LaunchServer.Port
 	}
 }
@@ -340,12 +376,12 @@ func DefaultConfig() *Config {
 				MinWidth:  1200,
 				MinHeight: 700,
 			},
-			MaxProfileLimit: 3,
+			MaxProfileLimit: DefaultMaxProfileLimit,
 			UsedCDKeys:      []string{},
 		},
 		Runtime: RuntimeConfig{
-			MaxMemoryMB: 1024, // 默认 1GB
-			GCPercent:   100,  // 默认 100%
+			MaxMemoryMB: 0,   // 默认禁用软限制，避免把运行中的前后端直接顶死
+			GCPercent:   100, // 默认 100%
 		},
 		Browser: BrowserConfig{
 			UserDataRoot:           "data",
@@ -376,7 +412,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		LaunchServer: LaunchServerConfig{
-			Port: 0,
+			Port: DefaultLaunchServerPort,
 		},
 	}
 }
@@ -388,6 +424,9 @@ func (c *Config) Save(configPath string) error {
 		return fmt.Errorf("序列化配置失败: %w", err)
 	}
 
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return fmt.Errorf("创建配置目录失败: %w", err)
+	}
 	if err := os.WriteFile(configPath, data, 0644); err != nil {
 		return fmt.Errorf("写入配置文件失败: %w", err)
 	}
@@ -422,6 +461,9 @@ func SaveProxies(path string, proxies []BrowserProxy) error {
 	data, err := yaml.Marshal(store)
 	if err != nil {
 		return fmt.Errorf("序列化代理数据失败: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("创建代理目录失败: %w", err)
 	}
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return fmt.Errorf("写入代理文件失败: %w", err)

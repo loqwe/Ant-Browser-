@@ -5,4 +5,5 @@ export interface DashboardStats {
   coreCount: number
   memUsedMB: number
   maxProfileLimit: number
+  appVersion: string
 }

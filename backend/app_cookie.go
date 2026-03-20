@@ -33,6 +33,10 @@ type cdpTarget struct {
 	Type                 string `json:"type"`
 }
 
+type cdpBrowserVersion struct {
+	WebSocketDebuggerUrl string `json:"webSocketDebuggerUrl"`
+}
+
 // cdpMessage 是 CDP 协议消息结构
 type cdpMessage struct {
 	Id     int            `json:"id"`
@@ -101,6 +105,49 @@ func cdpCall(debugPort int, method string, params map[string]any) (map[string]an
 		return nil, fmt.Errorf("CDP 错误: %s", cdpResp.Error.Message)
 	}
 	return cdpResp.Result, nil
+}
+
+func cdpBrowserCall(debugPort int, method string, params map[string]any) error {
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/json/version", debugPort))
+	if err != nil {
+		return fmt.Errorf("CDP /json/version 请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var version cdpBrowserVersion
+	if err := json.Unmarshal(body, &version); err != nil {
+		return fmt.Errorf("CDP browser target 解析失败: %w", err)
+	}
+	wsURL := strings.TrimSpace(version.WebSocketDebuggerUrl)
+	if wsURL == "" {
+		return fmt.Errorf("未找到浏览器级 WebSocket 调试地址")
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		return fmt.Errorf("浏览器级 WebSocket 连接失败: %w", err)
+	}
+	defer conn.Close()
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+
+	msg := cdpMessage{Id: 1, Method: method, Params: params}
+	if err := conn.WriteJSON(msg); err != nil {
+		return fmt.Errorf("浏览器级 CDP 命令发送失败: %w", err)
+	}
+
+	var cdpResp cdpResponse
+	if err := conn.ReadJSON(&cdpResp); err != nil {
+		// Browser.close 可能会直接关闭 websocket，视为成功。
+		if strings.EqualFold(method, "Browser.close") {
+			return nil
+		}
+		return fmt.Errorf("浏览器级 CDP 响应读取失败: %w", err)
+	}
+	if cdpResp.Error != nil {
+		return fmt.Errorf("浏览器级 CDP 错误: %s", cdpResp.Error.Message)
+	}
+	return nil
 }
 
 // getDebugPort 获取运行中实例的调试端口

@@ -18,6 +18,13 @@ echo.
 echo Working directory: %CD%
 echo.
 
+if not exist "wails.json" (
+    echo [ERROR] wails.json not found in repository root.
+    echo         This development branch must keep a complete Wails source tree.
+    if not "%NO_PAUSE%"=="1" pause
+    exit /b 1
+)
+
 echo [1/3] Ensure frontend\dist exists...
 if not exist "frontend\dist" (
     mkdir "frontend\dist"

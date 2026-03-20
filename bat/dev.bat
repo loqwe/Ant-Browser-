@@ -12,36 +12,74 @@ echo.
 
 call :cleanup_dev_logs
 
+set PREFERRED_FRONTEND_PORT=5218
+set FRONTEND_PORT=
+
+if not defined FRONTEND_NODE_MAX_OLD_SPACE_SIZE_MB set FRONTEND_NODE_MAX_OLD_SPACE_SIZE_MB=256
+if not defined FRONTEND_NODE_MAX_SEMI_SPACE_SIZE_MB set FRONTEND_NODE_MAX_SEMI_SPACE_SIZE_MB=16
+if not defined FRONTEND_NODE_RSS_WARN_MB set FRONTEND_NODE_RSS_WARN_MB=256
+if not defined FRONTEND_NODE_RSS_HARD_LIMIT_MB set FRONTEND_NODE_RSS_HARD_LIMIT_MB=360
+if not defined FRONTEND_NODE_MEMORY_POLL_MS set FRONTEND_NODE_MEMORY_POLL_MS=3000
+
 echo Cleaning stale processes...
+node frontend\scripts\dev-port-helper.mjs cleanup
+if errorlevel 1 (
+    echo [ERROR] Failed to clean stale frontend dev processes.
+    pause
+    exit /b 1
+)
 taskkill /F /IM ant-chrome-dev.exe >nul 2>&1
 taskkill /F /IM ant-chrome.exe >nul 2>&1
 echo.
 
-set FRONTEND_PORT=5218
-set PORT_ERROR=0
-set TEMP_DEV_DIST_CREATED=0
-set TEMP_DEV_PLACEHOLDER_CREATED=0
-
-call :cleanup_local_vite_port %FRONTEND_PORT%
-
-echo Checking port status...
-call :check_port %FRONTEND_PORT%
-
-if "!PORT_ERROR!"=="1" (
-    echo.
-    echo Please close the process using the occupied port and retry.
+echo Resolving frontend dev port...
+for /f "usebackq delims=" %%a in (`node frontend\scripts\dev-port-helper.mjs resolve --preferred %PREFERRED_FRONTEND_PORT%`) do (
+    if not defined FRONTEND_PORT set "FRONTEND_PORT=%%a"
+)
+if not defined FRONTEND_PORT (
+    echo [ERROR] Failed to resolve frontend dev port.
     pause
     exit /b 1
 )
+if not "%FRONTEND_PORT%"=="%PREFERRED_FRONTEND_PORT%" (
+    echo [ERROR] Preferred frontend port %PREFERRED_FRONTEND_PORT% is occupied by another program.
+    echo         Wails dev in current mode must use the fixed port %PREFERRED_FRONTEND_PORT%.
+    echo         Please free that port and retry.
+    pause
+    exit /b 1
+)
+echo [OK] Frontend dev port: %FRONTEND_PORT%
+echo.
+set FRONTEND_PORT=%PREFERRED_FRONTEND_PORT%
+echo Frontend Node old-space limit: %FRONTEND_NODE_MAX_OLD_SPACE_SIZE_MB% MB
+echo Frontend Node semi-space limit: %FRONTEND_NODE_MAX_SEMI_SPACE_SIZE_MB% MB
+echo Frontend Node RSS warning: %FRONTEND_NODE_RSS_WARN_MB% MB
+echo Frontend Node RSS hard limit: %FRONTEND_NODE_RSS_HARD_LIMIT_MB% MB
+echo Frontend Node RSS poll interval: %FRONTEND_NODE_MEMORY_POLL_MS% ms
 echo.
 
 set GOPROXY=https://goproxy.cn,direct
 
 echo Checking dependencies...
-if not exist "go.sum" (
-    echo Installing Go dependencies...
-    go mod download
-    go mod tidy
+if not exist "go.mod" (
+    echo [ERROR] go.mod not found in repository root.
+    echo         This development branch must keep a complete Go source tree.
+    pause
+    exit /b 1
+)
+if not exist "wails.json" (
+    echo [ERROR] wails.json not found in repository root.
+    echo         This development branch must keep a complete Wails source tree.
+    pause
+    exit /b 1
+)
+echo Installing Go dependencies...
+go mod download
+go mod tidy
+if errorlevel 1 (
+    echo [ERROR] Failed to install Go dependencies.
+    pause
+    exit /b 1
 )
 
 if not exist "frontend\node_modules" (
@@ -53,40 +91,25 @@ if not exist "frontend\node_modules" (
 echo.
 
 echo Regenerating Wails bindings...
-if not exist "frontend\dist" (
-    mkdir "frontend\dist"
-    set TEMP_DEV_DIST_CREATED=1
-)
-if not exist "frontend\dist\__wails_placeholder__.txt" (
-    echo placeholder> "frontend\dist\__wails_placeholder__.txt"
-    set TEMP_DEV_PLACEHOLDER_CREATED=1
-)
-wails generate module
+call bat\generate-bindings.bat --no-pause
 if errorlevel 1 (
-    call :cleanup_temp_dist
     echo [ERROR] Failed to generate Wails bindings.
     pause
     exit /b 1
 )
-
-if exist "frontend\wailsjs" (
-    xcopy /E /I /Y "frontend\wailsjs" "frontend\src\wailsjs" >nul
-)
 if not exist "frontend\src\wailsjs" (
-    call :cleanup_temp_dist
     echo [ERROR] Wails bindings output folder not found.
     pause
     exit /b 1
 )
-call :cleanup_temp_dist
 echo.
 
-echo Starting dev server...
+echo Starting Wails dev...
 echo Frontend URL: http://127.0.0.1:%FRONTEND_PORT%
-echo Wails dev endpoint: auto-select
+echo Wails dev endpoint: http://127.0.0.1:%FRONTEND_PORT%
 echo.
 
-wails dev -viteservertimeout 60
+wails dev -s -viteservertimeout 60
 set EXIT_CODE=%errorlevel%
 
 if not "%EXIT_CODE%"=="0" (
@@ -96,15 +119,6 @@ if not "%EXIT_CODE%"=="0" (
 
 pause
 exit /b %EXIT_CODE%
-
-:cleanup_temp_dist
-if "%TEMP_DEV_PLACEHOLDER_CREATED%"=="1" (
-    del /F /Q "frontend\dist\__wails_placeholder__.txt" >nul 2>&1
-)
-if "%TEMP_DEV_DIST_CREATED%"=="1" (
-    rmdir /S /Q "frontend\dist" >nul 2>&1
-)
-exit /b 0
 
 :cleanup_dev_logs
 for %%f in (
@@ -123,45 +137,5 @@ for %%f in (
     "wails-dev-stdout.log"
 ) do (
     if exist %%~f del /F /Q %%~f >nul 2>&1
-)
-exit /b 0
-
-:cleanup_local_vite_port
-set "CHECK_PORT=%~1"
-set "CHECK_PID="
-set "CHECK_CMDLINE="
-for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "$port=%CHECK_PORT%; $procId=(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess); if($procId){Write-Output $procId}"`) do (
-    set "CHECK_PID=%%a"
-)
-if not defined CHECK_PID exit /b 0
-
-for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "$line=Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq %CHECK_PID% } | Select-Object -First 1 -ExpandProperty CommandLine; if($line){Write-Output $line}"`) do (
-    set "CHECK_CMDLINE=%%a"
-)
-
-echo !CHECK_CMDLINE! | findstr /I /C:"%CD%\frontend" >nul
-set "MATCH_PROJECT=!errorlevel!"
-echo !CHECK_CMDLINE! | findstr /I /C:"vite" >nul
-set "MATCH_VITE=!errorlevel!"
-
-if "!MATCH_PROJECT!"=="0" if "!MATCH_VITE!"=="0" (
-    echo Cleaning stale local Vite process on port %CHECK_PORT% ^(PID !CHECK_PID!^)...
-    taskkill /F /PID !CHECK_PID! /T >nul 2>&1
-    timeout /t 1 /nobreak >nul
-)
-exit /b 0
-
-:check_port
-set "CHECK_PORT=%~1"
-set "CHECK_PID="
-for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "$port=%CHECK_PORT%; $procId=(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess); if($procId){Write-Output $procId}"`) do (
-    set "CHECK_PID=%%a"
-)
-
-if defined CHECK_PID (
-    set PORT_ERROR=1
-    echo [ERROR] Port %CHECK_PORT% is occupied. PID: !CHECK_PID!
-) else (
-    echo [OK] Port %CHECK_PORT% is available.
 )
 exit /b 0

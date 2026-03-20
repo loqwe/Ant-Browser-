@@ -125,6 +125,16 @@ var migrations = []migration{
 			`ALTER TABLE browser_proxies ADD COLUMN source_last_refresh_at TEXT NOT NULL DEFAULT ''`,
 		},
 	},
+	{
+		version: 6,
+		desc:    "实例表添加代理绑定快照字段",
+		stmts: []string{
+			`ALTER TABLE browser_profiles ADD COLUMN proxy_bind_source_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE browser_profiles ADD COLUMN proxy_bind_source_url TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE browser_profiles ADD COLUMN proxy_bind_name TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE browser_profiles ADD COLUMN proxy_bind_updated_at TEXT NOT NULL DEFAULT ''`,
+		},
+	},
 	// ── 新版本在此追加，格式：
 	// {
 	//     version: 4,

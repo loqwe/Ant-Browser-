@@ -242,7 +242,7 @@ func BuildManifest(scope Scope, appName, appVersion string, createdAt time.Time)
 	}
 	version := strings.TrimSpace(appVersion)
 	if version == "" {
-		version = "1.0.0"
+		version = "unknown"
 	}
 
 	entries := make([]ManifestEntry, 0, len(scope.Entries))

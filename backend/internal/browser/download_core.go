@@ -16,7 +16,6 @@ import (
 	"ant-chrome/backend/internal/logger"
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	"golang.org/x/sys/windows/registry"
 )
 
 // DownloadProgress 进度信息载体
@@ -38,38 +37,6 @@ func (cw *coreDownloadWriter) Write(p []byte) (int, error) {
 	default:
 	}
 	return cw.writeFunc(p)
-}
-
-// readWindowsSystemProxy 从 Windows 注册表读取当前系统代理（WinINet，Clash 就是写这里）
-// 返回格式如 "http://127.0.0.1:7890" 或 "socks5://127.0.0.1:7891"
-func readWindowsSystemProxy() (string, error) {
-	k, err := registry.OpenKey(registry.CURRENT_USER,
-		`Software\Microsoft\Windows\CurrentVersion\Internet Settings`,
-		registry.QUERY_VALUE)
-	if err != nil {
-		return "", err
-	}
-	defer k.Close()
-
-	enabled, _, err := k.GetIntegerValue("ProxyEnable")
-	if err != nil || enabled == 0 {
-		return "", fmt.Errorf("系统代理未启用")
-	}
-
-	proxyServer, _, err := k.GetStringValue("ProxyServer")
-	if err != nil || proxyServer == "" {
-		return "", fmt.Errorf("代理地址为空")
-	}
-
-	// proxyServer 格式可能是 "127.0.0.1:7890" 或 "http=..;https=.." 多协议格式
-	// 如果不含协议前缀，默认给 http://
-	if !strings.Contains(proxyServer, ":") {
-		return "", fmt.Errorf("无效的代理格式: %s", proxyServer)
-	}
-	if !strings.HasPrefix(proxyServer, "http") && !strings.HasPrefix(proxyServer, "socks") {
-		return "http://" + proxyServer, nil
-	}
-	return proxyServer, nil
 }
 
 // DownloadAndExtractCore 执行异步下载解压并在过程中发送事件
@@ -113,7 +80,7 @@ func (m *Manager) DownloadAndExtractCore(ctx context.Context, coreName string, t
 	if proxyConfig == "__system__" {
 		// http.ProxyFromEnvironment 只读环境变量，而 Clash 的全局代理写在 Windows 注册表里
 		// 必须直接读取注册表才能拿到正确的代理地址
-		if sysProxy, rErr := readWindowsSystemProxy(); rErr == nil && sysProxy != "" {
+		if sysProxy, rErr := readSystemProxy(); rErr == nil && sysProxy != "" {
 			if proxyURL, pErr := url.Parse(sysProxy); pErr == nil {
 				transport.Proxy = http.ProxyURL(proxyURL)
 				sendEvent("downloading", 0, "已从系统注册表读取代理: "+sysProxy)
@@ -189,7 +156,7 @@ func (m *Manager) DownloadAndExtractCore(ctx context.Context, coreName string, t
 		log.Info("内核下载配置入库成功", logger.F("core_name", coreName))
 	} else {
 		os.RemoveAll(targetDir) // 删除不正确的解压内容
-		sendEvent("error", 0, "解压后在目录未找到 chrome.exe 执行文件，请检查压缩包内容！")
+		sendEvent("error", 0, fmt.Sprintf("解压后未找到浏览器可执行文件（候选：%s），请检查压缩包内容！", strings.Join(CoreExecutableCandidates(), ", ")))
 	}
 }
 

@@ -1,10 +1,10 @@
 ﻿; Ant Browser NSIS Installer Script
-; Usage: makensis /DVERSION=1.0.0 /DSTAGINGDIR=C:\path\to\staging installer.nsi
+; Usage: makensis /DVERSION=1.1.0 /DSTAGINGDIR=C:\path\to\staging installer.nsi
 
 Unicode True
 
 !ifndef VERSION
-  !define VERSION "1.0.0"
+  !define VERSION "1.1.0"
 !endif
 !ifndef STAGINGDIR
   !define STAGINGDIR "..\publish\staging"
@@ -124,7 +124,11 @@ OutFile "..\publish\output\AntBrowser-Setup-${VERSION}.exe"
 InstallDir "${INSTALL_DIR}"
 InstallDirRegKey HKLM "${UNINSTALL_KEY}" "InstallLocation"
 RequestExecutionLevel admin
-SetCompressor /SOLID lzma
+!ifdef BESTCOMPRESSION
+  SetCompressor /SOLID lzma
+!else
+  SetCompressor lzma
+!endif
 
 !define MUI_ICON "..\build\windows\icon.ico"
 !define MUI_UNICON "..\build\windows\icon.ico"
@@ -154,6 +158,11 @@ Section "Ant Browser (required)" SecMain
 !else
   !echo "Warning: ${STAGINGDIR}\\config.yaml not found, installer will use runtime defaults."
 !endif
+!if /FileExists "${STAGINGDIR}\chrome\*"
+  SetOutPath "$INSTDIR\chrome"
+  File /r "${STAGINGDIR}\chrome\*"
+  SetOutPath "$INSTDIR"
+!endif
   CreateDirectory "$INSTDIR\data"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayName"     "${PRODUCT_NAME}"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayVersion"  "${VERSION}"
@@ -176,12 +185,6 @@ Section "Proxy Runtime (xray / sing-box)" SecRuntime
   File "${STAGINGDIR}\bin\sing-box.exe"
 SectionEnd
 
-Section "Chrome Engine" SecChrome
-  SectionIn RO
-  SetOutPath "$INSTDIR\chrome"
-  File /r "${STAGINGDIR}\chrome\*.*"
-SectionEnd
-
 Section /o "Desktop Shortcut" SecDesktop
   CreateShortcut "$DESKTOP\${PRODUCT_NAME}.lnk" "$INSTDIR\${PRODUCT_EXE}"
 SectionEnd
@@ -189,7 +192,6 @@ SectionEnd
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecMain}    "Ant Browser main program and default config (required)"
   !insertmacro MUI_DESCRIPTION_TEXT ${SecRuntime} "xray and sing-box proxy tools (vless/vmess/hysteria2)"
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecChrome}  "Bundled Chrome engine for browser instances"
   !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "Create a shortcut on the desktop"
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 

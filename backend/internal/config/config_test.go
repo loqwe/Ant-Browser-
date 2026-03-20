@@ -36,10 +36,10 @@ browser: {}
 	if cfg.App.Name != "Ant Browser" {
 		t.Fatalf("App.Name 未补齐: got=%q", cfg.App.Name)
 	}
-	if cfg.App.MaxProfileLimit != 6 {
-		t.Fatalf("MaxProfileLimit 计算错误: got=%d want=6", cfg.App.MaxProfileLimit)
+	if cfg.App.MaxProfileLimit != GithubStarProfileTotal {
+		t.Fatalf("MaxProfileLimit 计算错误: got=%d want=%d", cfg.App.MaxProfileLimit, GithubStarProfileTotal)
 	}
-	if cfg.Runtime.MaxMemoryMB != 1024 || cfg.Runtime.GCPercent != 100 {
+	if cfg.Runtime.MaxMemoryMB != 0 || cfg.Runtime.GCPercent != 100 {
 		t.Fatalf("Runtime 未补齐: got=%+v", cfg.Runtime)
 	}
 	if cfg.Logging.Level != "info" || cfg.Logging.FilePath != "data/logs/app.log" {
@@ -60,7 +60,7 @@ browser: {}
 	if cfg.Browser.Cores == nil || cfg.Browser.Proxies == nil || cfg.Browser.Profiles == nil {
 		t.Fatalf("Browser 列表字段应初始化为空切片")
 	}
-	if cfg.LaunchServer.Port != 0 {
+	if cfg.LaunchServer.Port != DefaultLaunchServerPort {
 		t.Fatalf("LaunchServer.Port 未补齐: got=%d", cfg.LaunchServer.Port)
 	}
 }

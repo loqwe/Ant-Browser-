@@ -26,7 +26,12 @@ func TestDescribeChromeProcessStartError(t *testing.T) {
 		{
 			name: "invalid win32",
 			err:  fmt.Errorf("%%1 is not a valid Win32 application"),
-			want: "与系统架构不兼容",
+			want: "与系统/架构不兼容",
+		},
+		{
+			name: "linux exec format error",
+			err:  fmt.Errorf("fork/exec /opt/chrome/chrome.exe: exec format error"),
+			want: "与系统/架构不兼容",
 		},
 	}
 

@@ -1,6 +1,7 @@
 package backend
 
 import (
+	appconfig "ant-chrome/backend/internal/config"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -81,7 +82,7 @@ func (a *App) RedeemCDKey(cdkey string) error {
 	}
 
 	// 3. 兑现与本地保存
-	a.config.App.MaxProfileLimit += 3
+	a.config.App.MaxProfileLimit += appconfig.StandardCDKeyProfileBonus
 	a.config.App.UsedCDKeys = append(a.config.App.UsedCDKeys, cdkey)
 
 	configPath := a.resolveAppPath("config.yaml")
@@ -107,7 +108,7 @@ func (a *App) RedeemGithubStar() error {
 	if a.config == nil {
 		a.config = DefaultConfig()
 	}
-	cdkey := "GITHUB_STAR_REWARD"
+	cdkey := appconfig.GithubStarRewardKey
 	// 防重复领取
 	for _, usedKey := range a.config.App.UsedCDKeys {
 		if usedKey == cdkey {
@@ -115,9 +116,11 @@ func (a *App) RedeemGithubStar() error {
 		}
 	}
 
-	// 兑现与本地保存: 增加 3 个
-	a.config.App.MaxProfileLimit += 3
 	a.config.App.UsedCDKeys = append(a.config.App.UsedCDKeys, cdkey)
+	a.config.App.MaxProfileLimit += appconfig.GithubStarProfileBonus
+	if minLimit := appconfig.MinimumProfileLimitForUsedKeys(a.config.App.UsedCDKeys); a.config.App.MaxProfileLimit < minLimit {
+		a.config.App.MaxProfileLimit = minLimit
+	}
 
 	configPath := a.resolveAppPath("config.yaml")
 	if _, _, err := reconcileConfigWithLocalLicense(configPath, a.config); err != nil {

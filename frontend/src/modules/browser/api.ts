@@ -628,6 +628,8 @@ export interface LaunchServerInfo {
   port: number
   preferredPort: number
   baseUrl: string
+  cdpUrl: string
+  activeDebugPort: number
   ready: boolean
 }
 
@@ -638,12 +640,16 @@ function normalizeLaunchServerInfo(payload: any): LaunchServerInfo {
   const fallbackPort = preferredPort > 0 ? preferredPort : 19876
   const effectivePort = port > 0 ? port : fallbackPort
   const baseUrl = String(payload?.baseUrl || (effectivePort > 0 ? `http://${host}:${effectivePort}` : ''))
+  const cdpUrl = String(payload?.cdpUrl || baseUrl)
+  const activeDebugPort = Number(payload?.activeDebugPort) || 0
 
   return {
     host,
     port: effectivePort,
     preferredPort,
     baseUrl,
+    cdpUrl,
+    activeDebugPort,
     ready: !!payload?.ready && port > 0,
   }
 }
@@ -664,6 +670,8 @@ export async function fetchLaunchServerInfo(): Promise<LaunchServerInfo> {
     port: 19876,
     preferredPort: 19876,
     baseUrl: 'http://127.0.0.1:19876',
+    cdpUrl: 'http://127.0.0.1:19876',
+    activeDebugPort: 0,
     ready: false,
   }
 }
