@@ -294,6 +294,10 @@ export function OpenUserDataDir(arg1) {
   return window['go']['main']['App']['OpenUserDataDir'](arg1);
 }
 
+export function QuitAppOnly() {
+  return window['go']['main']['App']['QuitAppOnly']();
+}
+
 export function RedeemCDKey(arg1) {
   return window['go']['main']['App']['RedeemCDKey'](arg1);
 }

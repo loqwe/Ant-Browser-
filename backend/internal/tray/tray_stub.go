@@ -4,8 +4,9 @@ package tray
 
 // Callbacks 托盘回调
 type Callbacks struct {
-	OnShow func()
-	OnQuit func()
+	OnShow        func()
+	OnQuitAppOnly func()
+	OnQuit        func()
 }
 
 // Run 非 Windows 平台无托盘实现，保持空操作。

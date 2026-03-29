@@ -46,6 +46,16 @@ type wailsBuildConfig struct {
 	} `json:"info"`
 }
 
+func envFlagEnabled(name string) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func resolveBuildVersion() string {
 	var cfg wailsBuildConfig
 	if err := json.Unmarshal(wailsConfigJSON, &cfg); err != nil {
@@ -120,25 +130,30 @@ func main() {
 		}
 	}
 
-	log.Printf("应用根目录: %s (dev=%v)", appRoot, isDevMode)
+	startupDebugEnabled := envFlagEnabled("ANT_BROWSER_DEBUG_STARTUP")
+	if startupDebugEnabled {
+		log.Printf("应用根目录: %s (dev=%v)", appRoot, isDevMode)
+	}
 	if err := backend.EnsureRuntimeLayout(appRoot); err != nil {
 		log.Printf("准备用户数据目录失败: %v", err)
 	}
-	if backend.RuntimeUsesDetachedState(appRoot) {
+	if startupDebugEnabled && backend.RuntimeUsesDetachedState(appRoot) {
 		log.Printf("检测到安装目录需要只读运行，状态目录切换到: %s", backend.RuntimeStateRoot(appRoot))
 	}
 	buildVersion := resolveBuildVersion()
-	log.Printf("应用版本: %s", buildVersion)
-	log.Printf(
-		"Wails 启动环境: GOOS=%s GOARCH=%s DISPLAY=%q WAYLAND_DISPLAY=%q XDG_SESSION_TYPE=%q XDG_CURRENT_DESKTOP=%q",
-		goruntime.GOOS,
-		goruntime.GOARCH,
-		os.Getenv("DISPLAY"),
-		os.Getenv("WAYLAND_DISPLAY"),
-		os.Getenv("XDG_SESSION_TYPE"),
-		os.Getenv("XDG_CURRENT_DESKTOP"),
-	)
-	if goruntime.GOOS == "linux" && strings.TrimSpace(os.Getenv("DISPLAY")) == "" && strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) == "" {
+	if startupDebugEnabled {
+		log.Printf("应用版本: %s", buildVersion)
+		log.Printf(
+			"Wails 启动环境: GOOS=%s GOARCH=%s DISPLAY=%q WAYLAND_DISPLAY=%q XDG_SESSION_TYPE=%q XDG_CURRENT_DESKTOP=%q",
+			goruntime.GOOS,
+			goruntime.GOARCH,
+			os.Getenv("DISPLAY"),
+			os.Getenv("WAYLAND_DISPLAY"),
+			os.Getenv("XDG_SESSION_TYPE"),
+			os.Getenv("XDG_CURRENT_DESKTOP"),
+		)
+	}
+	if startupDebugEnabled && goruntime.GOOS == "linux" && strings.TrimSpace(os.Getenv("DISPLAY")) == "" && strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) == "" {
 		log.Printf("检测到 Linux 图形环境变量为空：DISPLAY / WAYLAND_DISPLAY 都未设置，GUI 窗口大概率无法创建")
 	}
 
@@ -155,17 +170,21 @@ func main() {
 	var wailsCtx context.Context
 	startupReached := make(chan struct{})
 
-	go func() {
-		select {
-		case <-startupReached:
-			return
-		case <-time.After(12 * time.Second):
-			log.Printf("Wails OnStartup 在 12 秒内未触发。若终端一直转圈但没有窗口，优先检查 Linux 图形环境、libgtk-3、libwebkit2gtk，以及是否运行在 SSH/容器/无桌面会话中")
-		}
-	}()
+	if startupDebugEnabled {
+		go func() {
+			select {
+			case <-startupReached:
+				return
+			case <-time.After(12 * time.Second):
+				log.Printf("Wails OnStartup 在 12 秒内未触发。若终端一直转圈但没有窗口，优先检查 Linux 图形环境、libgtk-3、libwebkit2gtk，以及是否运行在 SSH/容器/无桌面会话中")
+			}
+		}()
+	}
 
 	// 启动应用
-	log.Printf("准备调用 wails.Run 创建 GUI 窗口")
+	if startupDebugEnabled {
+		log.Printf("准备调用 wails.Run 创建 GUI 窗口")
+	}
 	err = wails.Run(&options.App{
 		Title:     cfg.App.Name,
 		Width:     cfg.App.Window.Width,
@@ -178,7 +197,9 @@ func main() {
 		BackgroundColour: &options.RGBA{R: 245, G: 247, B: 250, A: 255},
 		OnStartup: func(ctx context.Context) {
 			close(startupReached)
-			log.Printf("Wails OnStartup 已触发，GUI 宿主已创建")
+			if startupDebugEnabled {
+				log.Printf("Wails OnStartup 已触发，GUI 宿主已创建")
+			}
 			wailsCtx = ctx
 			// 启动系统托盘（非阻塞）
 			go backend.RunTray(backend.TrayCallbacks{
@@ -186,15 +207,22 @@ func main() {
 					runtime.WindowShow(wailsCtx)
 					runtime.WindowUnminimise(wailsCtx)
 				},
+				OnQuitAppOnly: func() {
+					app.QuitAppOnly()
+				},
 				OnQuit: func() {
 					app.ForceQuit()
 				},
 			})
 			app.startup(ctx)
-			log.Printf("后端 startup 已完成")
+			if startupDebugEnabled {
+				log.Printf("后端 startup 已完成")
+			}
 		},
 		OnShutdown: func(ctx context.Context) {
-			log.Printf("Wails OnShutdown 已触发")
+			if startupDebugEnabled {
+				log.Printf("Wails OnShutdown 已触发")
+			}
 			backend.QuitTray()
 			app.shutdown(ctx)
 		},
@@ -219,5 +247,7 @@ func main() {
 	if err != nil {
 		log.Fatal("启动应用失败:", err)
 	}
-	log.Printf("wails.Run 已退出")
+	if startupDebugEnabled {
+		log.Printf("wails.Run 已退出")
+	}
 }

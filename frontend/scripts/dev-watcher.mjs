@@ -5,10 +5,15 @@ import { fileURLToPath } from 'node:url'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const frontendDir = resolve(scriptDir, '..')
 const defaultVitePort = 5218
-const defaultMaxOldSpaceSizeMb = 256
+const defaultMaxOldSpaceSizeMb = 512
 const defaultMaxSemiSpaceSizeMb = 16
-const defaultRssWarnMb = 256
-const defaultRssHardLimitMb = 360
+const defaultRssWarnMb = 384
+const defaultRssHardLimitMb = 0
+const defaultRssHardLimitHits = 3
+const defaultRssAutoRestart = false
+const defaultRssRestartDelayMs = 1500
+const defaultRssRestartMaxCount = 3
+const defaultRssRestartWindowMs = 300000
 const defaultMemoryPollMs = 3000
 const nodeExecutable = process.execPath
 const ensureNativeScript = resolve(frontendDir, 'scripts', 'ensure-rollup-native.mjs')
@@ -41,6 +46,33 @@ function resolvePositiveInteger(rawValue, fallbackValue) {
   const parsed = Number.parseInt(String(rawValue || '').trim(), 10)
   if (Number.isInteger(parsed) && parsed > 0) {
     return parsed
+  }
+  return fallbackValue
+}
+
+function resolveNonNegativeInteger(rawValue, fallbackValue) {
+  const raw = String(rawValue ?? '').trim()
+  if (!raw) {
+    return fallbackValue
+  }
+
+  const parsed = Number.parseInt(raw, 10)
+  if (Number.isInteger(parsed) && parsed >= 0) {
+    return parsed
+  }
+  return fallbackValue
+}
+
+function resolveBoolean(rawValue, fallbackValue) {
+  const raw = String(rawValue ?? '').trim().toLowerCase()
+  if (!raw) {
+    return fallbackValue
+  }
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') {
+    return true
+  }
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') {
+    return false
   }
   return fallbackValue
 }
@@ -126,11 +158,19 @@ function readProcessRssMb(pid) {
   return Math.round(rssKb / 1024)
 }
 
-function startMemoryWatcher(child, env) {
+function startMemoryWatcher(child, env, onHardLimitReached) {
   const rssWarnMb = resolvePositiveInteger(env.FRONTEND_NODE_RSS_WARN_MB, defaultRssWarnMb)
-  const rssHardLimitMb = resolvePositiveInteger(env.FRONTEND_NODE_RSS_HARD_LIMIT_MB, defaultRssHardLimitMb)
+  const rssHardLimitMb = resolveNonNegativeInteger(
+    env.FRONTEND_NODE_RSS_HARD_LIMIT_MB,
+    defaultRssHardLimitMb,
+  )
+  const rssHardLimitHits = resolvePositiveInteger(
+    env.FRONTEND_NODE_RSS_HARD_LIMIT_HITS,
+    defaultRssHardLimitHits,
+  )
   const pollMs = resolvePositiveInteger(env.FRONTEND_NODE_MEMORY_POLL_MS, defaultMemoryPollMs)
   let warnedAtMb = 0
+  let overHardLimitHits = 0
 
   const timer = setInterval(() => {
     if (!child.pid || child.exitCode !== null) {
@@ -148,9 +188,30 @@ function startMemoryWatcher(child, env) {
     }
 
     if (rssHardLimitMb > 0 && rssMb >= rssHardLimitMb) {
-      console.error(`[dev] vite RSS reached ${rssMb} MB, exceeding hard limit ${rssHardLimitMb} MB. stopping dev server.`)
-      killProcessTree(child.pid)
+      overHardLimitHits += 1
+
+      if (overHardLimitHits >= rssHardLimitHits) {
+        console.error(
+          `[dev] vite RSS reached ${rssMb} MB, exceeding hard limit ${rssHardLimitMb} MB for ${overHardLimitHits}/${rssHardLimitHits} checks. stopping Vite child.`,
+        )
+        try {
+          onHardLimitReached?.({
+            rssMb,
+            rssHardLimitMb,
+            hits: overHardLimitHits,
+            requiredHits: rssHardLimitHits,
+          })
+        } catch {}
+        killProcessTree(child.pid)
+      } else {
+        console.warn(
+          `[dev] vite RSS reached ${rssMb} MB (hard limit ${rssHardLimitMb} MB), hit ${overHardLimitHits}/${rssHardLimitHits}. waiting before taking action.`,
+        )
+      }
+      return
     }
+
+    overHardLimitHits = 0
   }, pollMs)
 
   timer.unref?.()
@@ -168,30 +229,144 @@ function main() {
   ensureNativeRuntime(childEnv)
 
   const nodeArgs = resolveNodeArgs(childEnv)
+  const rssHardLimitMb = resolveNonNegativeInteger(
+    childEnv.FRONTEND_NODE_RSS_HARD_LIMIT_MB,
+    defaultRssHardLimitMb,
+  )
+  const rssHardLimitHits = resolvePositiveInteger(
+    childEnv.FRONTEND_NODE_RSS_HARD_LIMIT_HITS,
+    defaultRssHardLimitHits,
+  )
+  const rssAutoRestartEnabled = resolveBoolean(
+    childEnv.FRONTEND_NODE_RSS_AUTO_RESTART,
+    defaultRssAutoRestart,
+  )
+  const rssRestartDelayMs = resolvePositiveInteger(
+    childEnv.FRONTEND_NODE_RSS_RESTART_DELAY_MS,
+    defaultRssRestartDelayMs,
+  )
+  const rssRestartMaxCount = resolvePositiveInteger(
+    childEnv.FRONTEND_NODE_RSS_RESTART_MAX_COUNT,
+    defaultRssRestartMaxCount,
+  )
+  const rssRestartWindowMs = resolvePositiveInteger(
+    childEnv.FRONTEND_NODE_RSS_RESTART_WINDOW_MS,
+    defaultRssRestartWindowMs,
+  )
+  const hardLimitDisplay = rssHardLimitMb > 0 ? `${rssHardLimitMb} MB` : 'disabled'
+  const restartDisplay = rssAutoRestartEnabled
+    ? `on(${rssRestartMaxCount}/${rssRestartWindowMs}ms delay=${rssRestartDelayMs}ms)`
+    : 'off'
+
   console.log(
-    `[dev] starting Vite on http://127.0.0.1:${requestedPort} with --max-old-space-size=${nodeArgs.maxOldSpaceSizeMb} MB --max-semi-space-size=${nodeArgs.maxSemiSpaceSizeMb} MB --rss-hard-limit=${resolvePositiveInteger(childEnv.FRONTEND_NODE_RSS_HARD_LIMIT_MB, defaultRssHardLimitMb)} MB`,
+    `[dev] starting Vite on http://127.0.0.1:${requestedPort} with --max-old-space-size=${nodeArgs.maxOldSpaceSizeMb} MB --max-semi-space-size=${nodeArgs.maxSemiSpaceSizeMb} MB --rss-hard-limit=${hardLimitDisplay} --rss-hard-limit-hits=${rssHardLimitHits} --rss-auto-restart=${restartDisplay}`,
   )
 
-  const child = spawn(nodeExecutable, nodeArgs.args, {
-    cwd: frontendDir,
-    stdio: 'inherit',
-    env: childEnv,
-  })
-  const memoryWatcher = startMemoryWatcher(child, childEnv)
   let shuttingDown = false
+  let child = null
+  let memoryWatcher = null
+  let childKilledByRssLimit = false
+  let restartTimer = null
+  let rssRestartTimestamps = []
+
+  const clearRestartTimer = () => {
+    if (restartTimer) {
+      clearTimeout(restartTimer)
+      restartTimer = null
+    }
+  }
+
+  const clearMemoryWatcher = () => {
+    if (memoryWatcher) {
+      clearInterval(memoryWatcher)
+      memoryWatcher = null
+    }
+  }
+
+  const canRestartAfterRssLimit = () => {
+    if (!rssAutoRestartEnabled) {
+      return false
+    }
+
+    const now = Date.now()
+    rssRestartTimestamps = rssRestartTimestamps.filter((timestamp) => now - timestamp <= rssRestartWindowMs)
+    if (rssRestartTimestamps.length >= rssRestartMaxCount) {
+      return false
+    }
+
+    rssRestartTimestamps.push(now)
+    return true
+  }
 
   const shutdown = (exitCode = 0) => {
     if (shuttingDown) {
       return
     }
+
     shuttingDown = true
-    if (memoryWatcher) {
-      clearInterval(memoryWatcher)
-    }
-    if (child.pid && child.exitCode === null) {
+    clearRestartTimer()
+    clearMemoryWatcher()
+
+    if (child && child.pid && child.exitCode === null) {
       killProcessTree(child.pid)
     }
+
     process.exit(exitCode)
+  }
+
+  const launchViteChild = () => {
+    childKilledByRssLimit = false
+    child = spawn(nodeExecutable, nodeArgs.args, {
+      cwd: frontendDir,
+      stdio: 'inherit',
+      env: childEnv,
+    })
+
+    memoryWatcher = startMemoryWatcher(child, childEnv, () => {
+      childKilledByRssLimit = true
+    })
+
+    child.on('error', (error) => {
+      console.error(`[dev] failed to start Vite: ${error instanceof Error ? error.message : String(error)}`)
+      shutdown(1)
+    })
+
+    child.on('exit', (code, signal) => {
+      clearMemoryWatcher()
+      child = null
+
+      if (shuttingDown) {
+        return
+      }
+
+      if (childKilledByRssLimit) {
+        if (!canRestartAfterRssLimit()) {
+          console.error(
+            `[dev] vite exceeded RSS hard limit repeatedly and auto restart budget is exhausted (${rssRestartMaxCount} times / ${rssRestartWindowMs}ms).`,
+          )
+          process.exit(1)
+          return
+        }
+
+        console.warn(`[dev] restarting Vite after RSS hard-limit stop in ${rssRestartDelayMs}ms...`)
+        restartTimer = setTimeout(() => {
+          restartTimer = null
+          if (!shuttingDown) {
+            launchViteChild()
+          }
+        }, rssRestartDelayMs)
+        restartTimer.unref?.()
+        return
+      }
+
+      if (signal) {
+        console.error(`[dev] vite exited with signal ${signal}`)
+        process.exit(1)
+        return
+      }
+
+      process.exit(code ?? 0)
+    })
   }
 
   const handleSignal = (signal) => {
@@ -202,30 +377,15 @@ function main() {
   process.on('SIGINT', handleSignal)
   process.on('SIGTERM', handleSignal)
   process.on('exit', () => {
-    if (memoryWatcher) {
-      clearInterval(memoryWatcher)
-    }
-    if (child.pid && child.exitCode === null) {
+    clearRestartTimer()
+    clearMemoryWatcher()
+
+    if (child && child.pid && child.exitCode === null) {
       killProcessTree(child.pid)
     }
   })
 
-  child.on('error', (error) => {
-    console.error(`[dev] failed to start Vite: ${error instanceof Error ? error.message : String(error)}`)
-    shutdown(1)
-  })
-
-  child.on('exit', (code, signal) => {
-    if (memoryWatcher) {
-      clearInterval(memoryWatcher)
-    }
-    if (signal) {
-      console.error(`[dev] vite exited with signal ${signal}`)
-      process.exit(1)
-      return
-    }
-    process.exit(code ?? 0)
-  })
+  launchViteChild()
 }
 
 try {

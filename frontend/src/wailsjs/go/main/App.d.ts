@@ -153,6 +153,8 @@ export function OpenCorePath(arg1:string):Promise<void>;
 
 export function OpenUserDataDir(arg1:string):Promise<void>;
 
+export function QuitAppOnly():Promise<void>;
+
 export function RedeemCDKey(arg1:string):Promise<void>;
 
 export function RedeemGithubStar():Promise<void>;

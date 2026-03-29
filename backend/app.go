@@ -24,6 +24,13 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+type quitMode uint8
+
+const (
+	quitModeFull quitMode = iota
+	quitModeAppOnly
+)
+
 // App 应用结构体
 type App struct {
 	ctx            context.Context
@@ -41,6 +48,7 @@ type App struct {
 	version        string
 
 	forceQuit        bool       // 强制退出标志，用于跳过 OnBeforeClose 的拦截
+	quitMode         quitMode   // 退出模式：全量退出 / 仅退出应用
 	maintenanceMu    sync.Mutex // 维护类操作（初始化/导入/导出）互斥锁
 	bridgeMu         sync.Mutex
 	xrayBridgeRefs   map[string]string
@@ -183,6 +191,11 @@ func (a *App) startup(ctx context.Context) {
 	// 启动 LaunchServer
 	port := a.config.LaunchServer.Port
 	a.launchServer = launchcode.NewLaunchServer(a.launchCodeSvc, a, a.browserMgr, port)
+	a.launchServer.SetAPIAuthConfig(launchcode.APIAuthConfig{
+		Enabled: a.config.LaunchServer.Auth.Enabled,
+		APIKey:  a.config.LaunchServer.Auth.APIKey,
+		Header:  a.config.LaunchServer.Auth.Header,
+	})
 	if err := a.launchServer.Start(); err != nil {
 		log.Error("LaunchServer 启动失败", logger.F("error", err))
 	} else {
@@ -254,6 +267,13 @@ func (a *App) ReloadConfig() error {
 	if a.singboxMgr != nil {
 		a.singboxMgr.Config = cfg
 	}
+	if a.launchServer != nil {
+		a.launchServer.SetAPIAuthConfig(launchcode.APIAuthConfig{
+			Enabled: cfg.LaunchServer.Auth.Enabled,
+			APIKey:  cfg.LaunchServer.Auth.APIKey,
+			Header:  cfg.LaunchServer.Auth.Header,
+		})
+	}
 
 	log.Info("前端触发配置重载成功")
 	return nil
@@ -274,8 +294,12 @@ func (a *App) applyRuntimeConfig(cfg config.RuntimeConfig) {
 
 func (a *App) shutdown(ctx context.Context) {
 	log := logger.New("App")
-	log.Info("应用正在关闭...")
-	a.stopRuntimeServices()
+	if a.shouldStopRuntimeServicesOnShutdown() {
+		log.Info("应用正在关闭...")
+		a.stopRuntimeServices()
+	} else {
+		log.Info("应用正在关闭（保留当前已打开的浏览器实例）...")
+	}
 	a.finalizeShutdown()
 }
 
@@ -285,8 +309,16 @@ func (a *App) GetInterceptor() *logger.MethodInterceptor {
 
 // ForceQuit 设置强制退出标志并调用 runtime.Quit
 func (a *App) ForceQuit() {
-	a.forceQuit = true
+	a.setQuitMode(quitModeFull)
 	a.stopRuntimeServices()
+	if a.ctx != nil {
+		runtime.Quit(a.ctx)
+	}
+}
+
+// QuitAppOnly 仅退出应用本身，保留当前已打开的浏览器实例。
+func (a *App) QuitAppOnly() {
+	a.setQuitMode(quitModeAppOnly)
 	if a.ctx != nil {
 		runtime.Quit(a.ctx)
 	}
@@ -306,6 +338,15 @@ func platformSupportsTrayCloseFlow() bool {
 
 func platformSupportsTrayCloseFlowForOS(goos string) bool {
 	return strings.EqualFold(strings.TrimSpace(goos), "windows")
+}
+
+func (a *App) setQuitMode(mode quitMode) {
+	a.forceQuit = true
+	a.quitMode = mode
+}
+
+func (a *App) shouldStopRuntimeServicesOnShutdown() bool {
+	return a.quitMode != quitModeAppOnly
 }
 
 func ShouldBlockClose(a *App, ctx context.Context) bool {
@@ -490,6 +531,8 @@ func (a *App) GetBrowserSettings() BrowserSettings {
 		DefaultFingerprintArgs: append([]string{}, a.config.Browser.DefaultFingerprintArgs...),
 		DefaultLaunchArgs:      append([]string{}, a.config.Browser.DefaultLaunchArgs...),
 		DefaultProxy:           a.config.Browser.DefaultProxy,
+		StartReadyTimeoutMs:    browserStartReadyTimeoutMillis(a.config),
+		StartStableWindowMs:    browserStartStableWindowMillis(a.config),
 	}
 }
 
@@ -499,6 +542,16 @@ func (a *App) SaveBrowserSettings(settings BrowserSettings) error {
 	a.config.Browser.DefaultFingerprintArgs = append([]string{}, settings.DefaultFingerprintArgs...)
 	a.config.Browser.DefaultLaunchArgs = append([]string{}, settings.DefaultLaunchArgs...)
 	a.config.Browser.DefaultProxy = strings.TrimSpace(settings.DefaultProxy)
+	if settings.StartReadyTimeoutMs > 0 {
+		a.config.Browser.StartReadyTimeoutMs = settings.StartReadyTimeoutMs
+	} else if a.config.Browser.StartReadyTimeoutMs <= 0 {
+		a.config.Browser.StartReadyTimeoutMs = browserStartReadyTimeoutMillis(nil)
+	}
+	if settings.StartStableWindowMs > 0 {
+		a.config.Browser.StartStableWindowMs = settings.StartStableWindowMs
+	} else if a.config.Browser.StartStableWindowMs <= 0 {
+		a.config.Browser.StartStableWindowMs = browserStartStableWindowMillis(nil)
+	}
 	if err := a.config.Save(a.resolveAppPath("config.yaml")); err != nil {
 		log.Error("浏览器配置保存失败", logger.F("error", err))
 		return err

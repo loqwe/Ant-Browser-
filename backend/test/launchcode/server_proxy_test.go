@@ -122,3 +122,47 @@ func TestCDPProxySwitchesToLatestLaunchedProfile(t *testing.T) {
 		}
 	}
 }
+
+func TestCDPProxySkipsPendingDebugProfile(t *testing.T) {
+	svc := newInMemoryService()
+	starter := newMockStarter()
+	profile := &browser.Profile{
+		ProfileId:      "profile-pending",
+		ProfileName:    "Profile Pending",
+		Running:        true,
+		Pid:            2001,
+		DebugPort:      9777,
+		DebugReady:     false,
+		RuntimeWarning: "debug pending",
+	}
+	starter.addProfile(profile)
+
+	code, err := svc.EnsureCode(profile.ProfileId)
+	if err != nil {
+		t.Fatalf("EnsureCode 失败: %v", err)
+	}
+
+	handler := buildTestHandler(svc, starter)
+
+	launchReq := httptest.NewRequest(http.MethodGet, "/api/launch/"+code, nil)
+	launchResp := httptest.NewRecorder()
+	handler.ServeHTTP(launchResp, launchReq)
+	if launchResp.Code != http.StatusOK {
+		t.Fatalf("启动请求失败: status=%d body=%s", launchResp.Code, launchResp.Body.String())
+	}
+
+	var launchPayload map[string]interface{}
+	if err := json.NewDecoder(launchResp.Body).Decode(&launchPayload); err != nil {
+		t.Fatalf("解析启动响应失败: %v", err)
+	}
+	if ready, _ := launchPayload["debugReady"].(bool); ready {
+		t.Fatalf("pending 实例不应被标记为 debugReady: %+v", launchPayload)
+	}
+
+	proxyReq := httptest.NewRequest(http.MethodGet, "/json/version", nil)
+	proxyResp := httptest.NewRecorder()
+	handler.ServeHTTP(proxyResp, proxyReq)
+	if proxyResp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("pending 实例不应成为活动 CDP target: status=%d body=%s", proxyResp.Code, proxyResp.Body.String())
+	}
+}

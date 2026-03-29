@@ -27,7 +27,9 @@ type Profile struct {
 	LaunchCode         string   `json:"launchCode"`
 	Running            bool     `json:"running"`
 	DebugPort          int      `json:"debugPort"`
+	DebugReady         bool     `json:"debugReady"`
 	Pid                int      `json:"pid"`
+	RuntimeWarning     string   `json:"runtimeWarning"`
 	LastError          string   `json:"lastError"`
 	CreatedAt          string   `json:"createdAt"`
 	UpdatedAt          string   `json:"updatedAt"`
@@ -63,6 +65,8 @@ type Settings struct {
 	DefaultFingerprintArgs []string `json:"defaultFingerprintArgs"`
 	DefaultLaunchArgs      []string `json:"defaultLaunchArgs"`
 	DefaultProxy           string   `json:"defaultProxy"`
+	StartReadyTimeoutMs    int      `json:"startReadyTimeoutMs"`
+	StartStableWindowMs    int      `json:"startStableWindowMs"`
 }
 
 // CoreInput 内核配置输入

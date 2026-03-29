@@ -63,6 +63,15 @@ browser: {}
 	if cfg.LaunchServer.Port != DefaultLaunchServerPort {
 		t.Fatalf("LaunchServer.Port 未补齐: got=%d", cfg.LaunchServer.Port)
 	}
+	if cfg.LaunchServer.Auth.Enabled {
+		t.Fatalf("LaunchServer.Auth.Enabled 默认应为 false: got=%v", cfg.LaunchServer.Auth.Enabled)
+	}
+	if cfg.LaunchServer.Auth.APIKey != "" {
+		t.Fatalf("LaunchServer.Auth.APIKey 默认应为空: got=%q", cfg.LaunchServer.Auth.APIKey)
+	}
+	if cfg.LaunchServer.Auth.Header != DefaultLaunchServerAPIKeyHeader {
+		t.Fatalf("LaunchServer.Auth.Header 未补齐: got=%q", cfg.LaunchServer.Auth.Header)
+	}
 }
 
 func TestLoadPreservesExplicitConfig(t *testing.T) {
@@ -119,6 +128,10 @@ browser:
   profiles: []
 launch_server:
   port: 30000
+  auth:
+    enabled: true
+    api_key: secret-key
+    header: X-Custom-Ant-Key
 `
 	if err := os.WriteFile(configPath, []byte(customConfig), 0o644); err != nil {
 		t.Fatalf("写入测试配置失败: %v", err)
@@ -152,6 +165,15 @@ launch_server:
 	}
 	if cfg.LaunchServer.Port != 30000 {
 		t.Fatalf("LaunchServer.Port 显式配置被覆盖: got=%d", cfg.LaunchServer.Port)
+	}
+	if !cfg.LaunchServer.Auth.Enabled {
+		t.Fatalf("LaunchServer.Auth.Enabled 显式配置被覆盖")
+	}
+	if cfg.LaunchServer.Auth.APIKey != "secret-key" {
+		t.Fatalf("LaunchServer.Auth.APIKey 显式配置被覆盖: got=%q", cfg.LaunchServer.Auth.APIKey)
+	}
+	if cfg.LaunchServer.Auth.Header != "X-Custom-Ant-Key" {
+		t.Fatalf("LaunchServer.Auth.Header 显式配置被覆盖: got=%q", cfg.LaunchServer.Auth.Header)
 	}
 }
 

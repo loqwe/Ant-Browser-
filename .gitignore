@@ -16,6 +16,7 @@ Thumbs.db
 # Logs
 *.log
 *.err
+tmp-frontend-limited-watcher.pid
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -83,6 +84,7 @@ __pycache__/
 # Test outputs / coverage
 coverage/
 *.out
+tmp-debug-port*/
 
 # Env files
 .env

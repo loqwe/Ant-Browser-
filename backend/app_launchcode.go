@@ -55,13 +55,26 @@ func (a *App) BrowserInstanceStartByCode(code string) (*browser.Profile, error) 
 // GetLaunchServerInfo 返回 LaunchServer 的当前监听信息（Wails 绑定）
 func (a *App) GetLaunchServerInfo() map[string]interface{} {
 	preferredPort := 0
+	authRequested := false
+	authConfigured := false
+	authEnabled := false
+	authHeader := launchcode.DefaultAPIKeyHeader
 	if a.config != nil {
 		preferredPort = a.config.LaunchServer.Port
+		authRequested = a.config.LaunchServer.Auth.Enabled
+		authConfigured = a.config.LaunchServer.Auth.APIKey != ""
+		if header := a.config.LaunchServer.Auth.Header; header != "" {
+			authHeader = header
+		}
 	}
 
 	actualPort := 0
 	if a.launchServer != nil {
 		actualPort = a.launchServer.Port()
+		authRequested = a.launchServer.APIAuthRequested()
+		authConfigured = a.launchServer.APIAuthConfigured()
+		authEnabled = a.launchServer.APIAuthEnabled()
+		authHeader = a.launchServer.APIAuthHeader()
 	}
 
 	info := map[string]interface{}{
@@ -69,6 +82,12 @@ func (a *App) GetLaunchServerInfo() map[string]interface{} {
 		"preferredPort": preferredPort,
 		"port":          actualPort,
 		"ready":         actualPort > 0,
+		"apiAuth": map[string]interface{}{
+			"requested":  authRequested,
+			"configured": authConfigured,
+			"enabled":    authEnabled,
+			"header":     authHeader,
+		},
 	}
 	if actualPort > 0 {
 		info["baseUrl"] = fmt.Sprintf("http://127.0.0.1:%d", actualPort)

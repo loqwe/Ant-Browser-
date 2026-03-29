@@ -76,22 +76,26 @@ type LaunchServer struct {
 	port       int
 	server     *http.Server
 	mu         sync.Mutex
+	authMu     sync.RWMutex
 	logMu      sync.Mutex
 	callLogs   []LaunchCallRecord
 	activeMu   sync.RWMutex
 	activePort int
 	activeID   string
 	activeName string
+	apiAuth    APIAuthConfig
 }
 
 // NewLaunchServer 创建 LaunchServer
 func NewLaunchServer(service *LaunchCodeService, starter BrowserStarter, mgr *browser.Manager, port int) *LaunchServer {
-	return &LaunchServer{
+	srv := &LaunchServer{
 		service:    service,
 		starter:    starter,
 		browserMgr: mgr,
 		port:       port,
 	}
+	srv.SetAPIAuthConfig(APIAuthConfig{})
+	return srv
 }
 
 // Start 非阻塞启动 HTTP 服务。
@@ -99,14 +103,7 @@ func NewLaunchServer(service *LaunchCodeService, starter BrowserStarter, mgr *br
 //   - port <= 0：自动分配随机可用端口（仅内部测试/显式传 0 时）
 //   - port > 0：绑定指定固定端口；若被占用则直接返回错误
 func (s *LaunchServer) Start() error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", s.handleHealth)
-	mux.HandleFunc("/api/launch", s.handleLaunchWithBody)
-	mux.HandleFunc("/api/launch/logs", s.handleLaunchLogs)
-	mux.HandleFunc("/api/launch/", s.handleLaunch)
-	mux.HandleFunc("/", s.handleCDPProxy)
-
-	handler := s.localhostMiddleware(mux)
+	handler := s.buildHandler(true)
 
 	preferredPort := s.port
 	ln, port, err := bindLaunchListener(preferredPort)
@@ -125,6 +122,12 @@ func (s *LaunchServer) Start() error {
 	} else {
 		log.Info("LaunchServer 使用固定端口", logger.F("port", port))
 	}
+	auth := s.apiAuthConfig()
+	if auth.Active() {
+		log.Info("LaunchServer API 认证已启用", logger.F("header", auth.Header))
+	} else if auth.Requested() && !auth.Configured() {
+		log.Warn("LaunchServer API 认证配置未生效", logger.F("reason", "api_key is empty"), logger.F("header", auth.Header))
+	}
 	log.Info("LaunchServer 已启动", logger.F("port", port))
 
 	go func() {
@@ -134,6 +137,27 @@ func (s *LaunchServer) Start() error {
 	}()
 
 	return nil
+}
+
+func (s *LaunchServer) buildMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.HandleFunc("/api/profiles", s.handleProfiles)
+	mux.HandleFunc("/api/profiles/", s.handleProfileByID)
+	mux.HandleFunc("/api/launch", s.handleLaunchWithBody)
+	mux.HandleFunc("/api/launch/logs", s.handleLaunchLogs)
+	mux.HandleFunc("/api/launch/", s.handleLaunch)
+	mux.HandleFunc("/", s.handleCDPProxy)
+	return mux
+}
+
+func (s *LaunchServer) buildHandler(includeLocalhost bool) http.Handler {
+	var handler http.Handler = s.buildMux()
+	handler = s.apiAuthMiddleware(handler)
+	if includeLocalhost {
+		handler = s.localhostMiddleware(handler)
+	}
+	return handler
 }
 
 func bindLaunchListener(preferredPort int) (net.Listener, int, error) {
@@ -217,7 +241,7 @@ func (s *LaunchServer) ActiveDebugPort() int {
 
 // SetActiveProfile 将统一入口切换到指定实例的调试端口。
 func (s *LaunchServer) SetActiveProfile(profile *browser.Profile) {
-	if profile == nil || profile.DebugPort <= 0 {
+	if profile == nil || profile.DebugPort <= 0 || !profile.DebugReady {
 		return
 	}
 
@@ -341,20 +365,22 @@ func (s *LaunchServer) handleLaunch(w http.ResponseWriter, r *http.Request) {
 func (s *LaunchServer) launchSuccessPayload(profile *browser.Profile, launchCode string) map[string]interface{} {
 	cdpURL := s.CDPURL()
 	cdpPort := s.Port()
-	if cdpURL == "" && profile != nil && profile.DebugPort > 0 {
+	if cdpURL == "" && profile != nil && profile.DebugReady && profile.DebugPort > 0 {
 		cdpPort = profile.DebugPort
 		cdpURL = fmt.Sprintf("http://127.0.0.1:%d", profile.DebugPort)
 	}
 
 	return map[string]interface{}{
-		"ok":          true,
-		"profileId":   profile.ProfileId,
-		"profileName": profile.ProfileName,
-		"launchCode":  launchCode,
-		"pid":         profile.Pid,
-		"debugPort":   profile.DebugPort,
-		"cdpPort":     cdpPort,
-		"cdpUrl":      cdpURL,
+		"ok":             true,
+		"profileId":      profile.ProfileId,
+		"profileName":    profile.ProfileName,
+		"launchCode":     launchCode,
+		"pid":            profile.Pid,
+		"debugPort":      profile.DebugPort,
+		"debugReady":     profile.DebugReady,
+		"runtimeWarning": profile.RuntimeWarning,
+		"cdpPort":        cdpPort,
+		"cdpUrl":         cdpURL,
 	}
 }
 
@@ -474,9 +500,30 @@ func (s *LaunchServer) launchBySelector(selector LaunchSelector, params LaunchRe
 
 func (s *LaunchServer) launchProfile(profileID string, params LaunchRequestParams) (*browser.Profile, error) {
 	if starterWithParams, ok := s.starter.(BrowserStarterWithParams); ok {
-		return starterWithParams.StartInstanceWithParams(profileID, params)
+		profile, err := starterWithParams.StartInstanceWithParams(profileID, params)
+		return normalizeLaunchedProfileRuntime(profile), err
 	}
-	return s.starter.StartInstance(profileID)
+	profile, err := s.starter.StartInstance(profileID)
+	return normalizeLaunchedProfileRuntime(profile), err
+}
+
+func normalizeLaunchedProfileRuntime(profile *browser.Profile) *browser.Profile {
+	if profile == nil {
+		return nil
+	}
+
+	// Backward compatibility: older starter implementations only filled pid/debugPort.
+	if !profile.Running && (profile.Pid > 0 || profile.DebugPort > 0) {
+		profile.Running = true
+	}
+	if !profile.DebugReady &&
+		profile.DebugPort > 0 &&
+		strings.TrimSpace(profile.RuntimeWarning) == "" &&
+		(profile.Running || profile.Pid > 0) {
+		profile.DebugReady = true
+	}
+
+	return profile
 }
 
 func (s *LaunchServer) launchBySelectorInternal(selector LaunchSelector, params LaunchRequestParams, allowCodeKeywordFallback bool) (*browser.Profile, string, int, string) {
@@ -597,12 +644,14 @@ func (s *LaunchServer) launchBatchSuccessPayload(profiles []*browser.Profile) ma
 			continue
 		}
 		item := map[string]interface{}{
-			"profileId":   profile.ProfileId,
-			"profileName": profile.ProfileName,
-			"launchCode":  profile.LaunchCode,
-			"pid":         profile.Pid,
-			"debugPort":   profile.DebugPort,
-			"isActive":    i == len(profiles)-1,
+			"profileId":      profile.ProfileId,
+			"profileName":    profile.ProfileName,
+			"launchCode":     profile.LaunchCode,
+			"pid":            profile.Pid,
+			"debugPort":      profile.DebugPort,
+			"debugReady":     profile.DebugReady,
+			"runtimeWarning": profile.RuntimeWarning,
+			"isActive":       i == len(profiles)-1,
 		}
 		items = append(items, item)
 	}
@@ -610,7 +659,7 @@ func (s *LaunchServer) launchBatchSuccessPayload(profiles []*browser.Profile) ma
 	activeProfile, _, _ := summarizeLaunchedProfiles(profiles)
 	cdpURL := s.CDPURL()
 	cdpPort := s.Port()
-	if cdpURL == "" && activeProfile != nil && activeProfile.DebugPort > 0 {
+	if cdpURL == "" && activeProfile != nil && activeProfile.DebugReady && activeProfile.DebugPort > 0 {
 		cdpPort = activeProfile.DebugPort
 		cdpURL = fmt.Sprintf("http://127.0.0.1:%d", activeProfile.DebugPort)
 	}
@@ -660,13 +709,7 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 
 // NewTestHandler 返回不含 localhost 限制的 handler，仅供测试使用
 func NewTestHandler(s *LaunchServer) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", s.handleHealth)
-	mux.HandleFunc("/api/launch", s.handleLaunchWithBody)
-	mux.HandleFunc("/api/launch/logs", s.handleLaunchLogs)
-	mux.HandleFunc("/api/launch/", s.handleLaunch)
-	mux.HandleFunc("/", s.handleCDPProxy)
-	return mux
+	return s.buildHandler(false)
 }
 
 func normalizeStringSlice(items []string) []string {

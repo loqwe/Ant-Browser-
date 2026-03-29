@@ -158,8 +158,11 @@ func (a *App) getDebugPort(profileId string) (int, error) {
 	if !exists {
 		return 0, fmt.Errorf("profile not found: %s", profileId)
 	}
-	if !profile.Running || profile.DebugPort == 0 {
-		return 0, fmt.Errorf("实例未运行或调试端口不可用")
+	if !profile.Running {
+		return 0, fmt.Errorf("实例未运行")
+	}
+	if profile.DebugPort == 0 || !profile.DebugReady {
+		return 0, fmt.Errorf("实例调试接口尚未就绪，请稍后重试")
 	}
 	return profile.DebugPort, nil
 }

@@ -22,7 +22,9 @@ let mockProfiles: BrowserProfile[] = [
     keywords: [],
     running: false,
     debugPort: 0,
+    debugReady: false,
     pid: 0,
+    runtimeWarning: '',
     lastError: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -74,7 +76,9 @@ export async function createBrowserProfile(input: BrowserProfileInput): Promise<
     keywords: input.keywords || {},
     running: false,
     debugPort: 0,
+    debugReady: false,
     pid: 0,
+    runtimeWarning: '',
     lastError: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -118,6 +122,8 @@ export async function copyBrowserProfile(profileId: string, newName: string): Pr
     profileName: newName || src.profileName + ' (副本)',
     userDataDir: `mock-${Date.now()}`,
     running: false,
+    debugReady: false,
+    runtimeWarning: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }
@@ -135,7 +141,7 @@ export async function startBrowserInstance(profileId: string): Promise<BrowserPr
     return (await bindings.BrowserInstanceStart(profileId)) || null
   }
   mockProfiles = mockProfiles.map(item =>
-    item.profileId === profileId ? { ...item, running: true, debugPort: 9222, pid: Math.floor(Math.random() * 100000), lastStartAt: new Date().toISOString() } : item
+    item.profileId === profileId ? { ...item, running: true, debugPort: 9222, debugReady: true, pid: Math.floor(Math.random() * 100000), runtimeWarning: '', lastStartAt: new Date().toISOString() } : item
   )
   return mockProfiles.find(item => item.profileId === profileId) || null
 }
@@ -159,7 +165,7 @@ export async function stopBrowserInstance(profileId: string): Promise<BrowserPro
     return (await bindings.BrowserInstanceStop(profileId)) || null
   }
   mockProfiles = mockProfiles.map(item =>
-    item.profileId === profileId ? { ...item, running: false, pid: 0, lastStopAt: new Date().toISOString() } : item
+    item.profileId === profileId ? { ...item, running: false, debugReady: false, debugPort: 0, pid: 0, runtimeWarning: '', lastStopAt: new Date().toISOString() } : item
   )
   return mockProfiles.find(item => item.profileId === profileId) || null
 }
@@ -199,9 +205,9 @@ export async function fetchBrowserTabs(profileId: string): Promise<BrowserTab[]>
 export async function fetchBrowserSettings(): Promise<BrowserSettings> {
   const bindings: any = await getBindings()
   if (bindings?.GetBrowserSettings) {
-    return (await bindings.GetBrowserSettings()) || { userDataRoot: 'data', defaultFingerprintArgs: [], defaultLaunchArgs: [], defaultProxy: '' }
+    return (await bindings.GetBrowserSettings()) || { userDataRoot: 'data', defaultFingerprintArgs: [], defaultLaunchArgs: [], defaultProxy: '', startReadyTimeoutMs: 3000, startStableWindowMs: 1200 }
   }
-  return { userDataRoot: 'data', defaultFingerprintArgs: [], defaultLaunchArgs: [], defaultProxy: '' }
+  return { userDataRoot: 'data', defaultFingerprintArgs: [], defaultLaunchArgs: [], defaultProxy: '', startReadyTimeoutMs: 3000, startStableWindowMs: 1200 }
 }
 
 export async function saveBrowserSettings(settings: BrowserSettings): Promise<boolean> {
@@ -631,6 +637,12 @@ export interface LaunchServerInfo {
   cdpUrl: string
   activeDebugPort: number
   ready: boolean
+  apiAuth: {
+    requested: boolean
+    configured: boolean
+    enabled: boolean
+    header: string
+  }
 }
 
 function normalizeLaunchServerInfo(payload: any): LaunchServerInfo {
@@ -642,6 +654,13 @@ function normalizeLaunchServerInfo(payload: any): LaunchServerInfo {
   const baseUrl = String(payload?.baseUrl || (effectivePort > 0 ? `http://${host}:${effectivePort}` : ''))
   const cdpUrl = String(payload?.cdpUrl || baseUrl)
   const activeDebugPort = Number(payload?.activeDebugPort) || 0
+  const apiAuthPayload = payload?.apiAuth || {}
+  const apiAuth = {
+    requested: !!apiAuthPayload?.requested,
+    configured: !!apiAuthPayload?.configured,
+    enabled: !!apiAuthPayload?.enabled,
+    header: String(apiAuthPayload?.header || 'X-Ant-Api-Key'),
+  }
 
   return {
     host,
@@ -651,6 +670,7 @@ function normalizeLaunchServerInfo(payload: any): LaunchServerInfo {
     cdpUrl,
     activeDebugPort,
     ready: !!payload?.ready && port > 0,
+    apiAuth,
   }
 }
 
@@ -673,6 +693,12 @@ export async function fetchLaunchServerInfo(): Promise<LaunchServerInfo> {
     cdpUrl: 'http://127.0.0.1:19876',
     activeDebugPort: 0,
     ready: false,
+    apiAuth: {
+      requested: false,
+      configured: false,
+      enabled: false,
+      header: 'X-Ant-Api-Key',
+    },
   }
 }
 

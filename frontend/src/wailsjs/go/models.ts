@@ -411,7 +411,9 @@ export namespace browser {
 	    launchCode: string;
 	    running: boolean;
 	    debugPort: number;
+	    debugReady: boolean;
 	    pid: number;
+	    runtimeWarning: string;
 	    lastError: string;
 	    createdAt: string;
 	    updatedAt: string;
@@ -442,7 +444,9 @@ export namespace browser {
 	        this.launchCode = source["launchCode"];
 	        this.running = source["running"];
 	        this.debugPort = source["debugPort"];
+	        this.debugReady = source["debugReady"];
 	        this.pid = source["pid"];
+	        this.runtimeWarning = source["runtimeWarning"];
 	        this.lastError = source["lastError"];
 	        this.createdAt = source["createdAt"];
 	        this.updatedAt = source["updatedAt"];
@@ -485,6 +489,8 @@ export namespace browser {
 	    defaultFingerprintArgs: string[];
 	    defaultLaunchArgs: string[];
 	    defaultProxy: string;
+	    startReadyTimeoutMs: number;
+	    startStableWindowMs: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -496,6 +502,8 @@ export namespace browser {
 	        this.defaultFingerprintArgs = source["defaultFingerprintArgs"];
 	        this.defaultLaunchArgs = source["defaultLaunchArgs"];
 	        this.defaultProxy = source["defaultProxy"];
+	        this.startReadyTimeoutMs = source["startReadyTimeoutMs"];
+	        this.startStableWindowMs = source["startStableWindowMs"];
 	    }
 	}
 	export class Tab {

@@ -3,11 +3,22 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { FolderOpen, Layers } from 'lucide-react'
 import { Button, Card, ConfirmModal, FormItem, Input, Modal, Select, Textarea, toast } from '../../../shared/components'
 import type { BrowserCore, BrowserProfileInput, BrowserProxy, BrowserGroup } from '../types'
-import { createBrowserProfile, fetchAllTags, fetchBrowserCores, fetchBrowserProfiles, fetchBrowserProxies, fetchGroups, openUserDataDir, updateBrowserProfile } from '../api'
+import { createBrowserProfile, fetchAllTags, fetchBrowserCores, fetchBrowserProfiles, fetchBrowserProxies, fetchBrowserSettings, fetchGroups, openUserDataDir, updateBrowserProfile } from '../api'
 import { FingerprintPanel } from '../components/FingerprintPanel'
 import { TagInput } from '../components/TagInput'
 import { GroupSelector } from '../components/GroupSelector'
 import { ProxyPickerModal } from '../components/ProxyPickerModal'
+
+const fallbackLowLaunchArgs = ['--disable-sync', '--no-first-run']
+
+function normalizeLaunchArgs(args: string[]): string[] {
+  return (args || []).map(item => item.trim()).filter(Boolean)
+}
+
+function resolveDefaultLaunchArgs(args: string[]): string[] {
+  const normalized = normalizeLaunchArgs(args)
+  return normalized.length > 0 ? normalized : fallbackLowLaunchArgs
+}
 
 export function BrowserEditPage() {
   const { id } = useParams()
@@ -38,21 +49,27 @@ export function BrowserEditPage() {
 
   useEffect(() => {
     const loadData = async () => {
-      const [coreList, proxyList, tagList, groupList] = await Promise.all([
+      const [coreList, proxyList, tagList, groupList, settings] = await Promise.all([
         fetchBrowserCores(),
         fetchBrowserProxies(),
         fetchAllTags(),
         fetchGroups(),
+        fetchBrowserSettings(),
       ])
+      const resolvedDefaultLaunchArgs = resolveDefaultLaunchArgs(settings.defaultLaunchArgs || [])
       setCores(coreList)
       setProxies(proxyList)
       setAllTags(tagList)
       setGroups(groupList)
 
-      if (isCreate) return
+      if (isCreate) {
+        setLaunchArgsText(resolvedDefaultLaunchArgs.join('\n'))
+        return
+      }
       const list = await fetchBrowserProfiles()
       const current = list.find(item => item.profileId === id)
       if (!current) return
+      const currentLaunchArgs = normalizeLaunchArgs(current.launchArgs)
       const normalizedCoreId = !current.coreId || current.coreId.toLowerCase() === 'default'
         ? ''
         : current.coreId
@@ -63,12 +80,12 @@ export function BrowserEditPage() {
         fingerprintArgs: current.fingerprintArgs,
         proxyId: current.proxyId,
         proxyConfig: current.proxyConfig,
-        launchArgs: current.launchArgs,
+        launchArgs: currentLaunchArgs,
         tags: current.tags,
         keywords: current.keywords || [],
         groupId: current.groupId || '',
       })
-      setLaunchArgsText(current.launchArgs.join('\n'))
+      setLaunchArgsText(currentLaunchArgs.join('\n'))
     }
     loadData()
   }, [id, isCreate])
@@ -82,7 +99,7 @@ export function BrowserEditPage() {
     setSaving(true)
     const payload: BrowserProfileInput = {
       ...formData,
-      launchArgs: launchArgsText.split('\n').map((s: string) => s.trim()).filter(Boolean),
+      launchArgs: normalizeLaunchArgs(launchArgsText.split('\n')),
     }
     try {
       if (isCreate) {
@@ -230,8 +247,18 @@ export function BrowserEditPage() {
         />
       </Card>
 
-      <Card title="启动参数" subtitle="每行一个参数">
-        <Textarea value={launchArgsText} onChange={e => { setLaunchArgsText(e.target.value); setIsDirty(true) }} rows={6} placeholder="--disable-sync" />
+      <Card title="启动参数" subtitle={isCreate ? '新建时默认填入轻量参数模板，直接改这里即可' : '每行一个参数'}>
+        <div className="space-y-2">
+          <Textarea
+            value={launchArgsText}
+            onChange={e => { setLaunchArgsText(e.target.value); setIsDirty(true) }}
+            rows={6}
+            placeholder="--disable-sync"
+          />
+          {isCreate && (
+            <p className="text-xs text-[var(--color-text-muted)]">这里默认就是轻量参数模板；需要更复杂的参数，直接在此基础上修改。</p>
+          )}
+        </div>
       </Card>
 
       <ConfirmModal

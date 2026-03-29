@@ -4,8 +4,6 @@
   "outputfilename": "ant-chrome",
   "frontend:install": "npm install && npm run ensure:native",
   "frontend:build": "npm run build",
-  "frontend:dev:watcher": "node ./scripts/dev-watcher.mjs",
-  "frontend:dev:serverUrl": "http://127.0.0.1:5218",
   "author": {
     "name": "Ant Chrome Team",
     "email": "contact@antblack.de"

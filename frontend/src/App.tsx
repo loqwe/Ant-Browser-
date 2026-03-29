@@ -7,7 +7,7 @@ import { ToastContainer, Modal, Button, Loading } from './shared/components'
 import { AlertCircle } from 'lucide-react'
 import { useNotificationStore } from './store/notificationStore'
 import { useBackupStore } from './store/backupStore'
-import { ForceQuit as ForceQuitApp } from './wailsjs/go/main/App'
+import { ForceQuit as ForceQuitApp, QuitAppOnly as QuitAppOnlyApp } from './wailsjs/go/main/App'
 import { Environment, Quit, WindowHide, WindowMinimise } from './wailsjs/runtime/runtime'
 
 function lazyNamed<TModule extends Record<string, ComponentType<any>>>(
@@ -92,16 +92,19 @@ function useWailsNotifications() {
 function CloseConfirmModal() {
   const [open, setOpen] = useState(false)
   const [platform, setPlatform] = useState('windows')
+  const [quittingAction, setQuittingAction] = useState<'app-only' | 'app-and-browser' | null>(null)
   const importInProgress = useBackupStore((s) => s.importInProgress)
   const importProgress = useBackupStore((s) => s.importProgress)
   const importMessage = useBackupStore((s) => s.importMessage)
   const supportsTray = platform === 'windows'
+  const quitting = quittingAction !== null
 
   useEffect(() => {
     const runtime = (window as any).runtime
     if (!runtime?.EventsOn) return
 
     const off = runtime.EventsOn('app:request-close', () => {
+      setQuittingAction(null)
       setOpen(true)
     })
     return () => {
@@ -125,7 +128,13 @@ function CloseConfirmModal() {
     }
   }, [])
 
+  const closeModal = () => {
+    if (quitting) return
+    setOpen(false)
+  }
+
   const handleMinimize = () => {
+    if (quitting) return
     setOpen(false)
     if (supportsTray) {
       WindowHide()
@@ -134,8 +143,18 @@ function CloseConfirmModal() {
     WindowMinimise()
   }
 
-  const handleQuit = async () => {
-    setOpen(false)
+  const handleQuitAppOnly = async () => {
+    setQuittingAction('app-only')
+    try {
+      await QuitAppOnlyApp()
+    } catch (error) {
+      console.error('QuitAppOnly failed', error)
+      setQuittingAction(null)
+    }
+  }
+
+  const handleQuitAppAndBrowsers = async () => {
+    setQuittingAction('app-and-browser')
     try {
       await Promise.race([
         ForceQuitApp(),
@@ -150,9 +169,10 @@ function CloseConfirmModal() {
   return (
     <Modal
       open={open}
-      onClose={() => setOpen(false)}
-      title={importInProgress ? '关闭应用确认' : '退出确认'}
-      width="360px"
+      onClose={closeModal}
+      title={importInProgress ? '关闭应用确认' : undefined}
+      width={importInProgress ? '360px' : '420px'}
+      closable={!quitting}
     >
       <div className="flex flex-col items-center pt-2 pb-6 px-4">
         <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 ${
@@ -160,9 +180,11 @@ function CloseConfirmModal() {
         }`}>
           <AlertCircle className="w-6 h-6" />
         </div>
-        <h3 className="text-lg font-medium text-[var(--color-text-primary)] mb-2">
-          {importInProgress ? '正在加载中，是否关闭？' : '是否退出应用程序？'}
-        </h3>
+        {importInProgress && (
+          <h3 className="text-lg font-medium text-[var(--color-text-primary)] mb-2">
+            正在加载中，是否关闭？
+          </h3>
+        )}
         {importInProgress ? (
           <p className="text-sm text-[var(--color-text-secondary)] text-center mb-6">
             当前正在加载配置
@@ -171,30 +193,52 @@ function CloseConfirmModal() {
             {importMessage || '强制关闭会中断本次加载，是否仍要关闭应用？'}
           </p>
         ) : (
-          <p className="text-sm text-[var(--color-text-secondary)] text-center mb-6">
-            退出后将停止所有在此客户端运行的服务。
-            <br />
-            {supportsTray ? '如果您需要保持服务运行，请选择「最小化到托盘」。' : 'Linux 当前不提供托盘最小化，关闭窗口将直接退出应用。'}
+          <p className="mb-6 text-sm text-center text-[var(--color-text-secondary)]">
+            可仅退出应用，或连同浏览器一起关闭。
           </p>
         )}
 
-        <div className="flex gap-3 w-full">
+        <div className={`w-full ${importInProgress ? 'flex gap-3' : 'flex flex-col gap-2'}`}>
           {importInProgress ? (
             <>
-              <Button variant="secondary" className="flex-1" onClick={() => setOpen(false)}>
+              <Button variant="secondary" className="flex-1" onClick={closeModal} disabled={quitting}>
                 继续加载
               </Button>
-              <Button variant="danger" className="flex-1" onClick={handleQuit}>
+              <Button
+                variant="danger"
+                className="flex-1"
+                onClick={handleQuitAppAndBrowsers}
+                loading={quittingAction === 'app-and-browser'}
+              >
                 仍要关闭
               </Button>
             </>
           ) : (
             <>
-              <Button variant="secondary" className="flex-1" onClick={supportsTray ? handleMinimize : () => setOpen(false)}>
+              <Button
+                variant="secondary"
+                className="w-full !bg-[#f3f4f6] !border-[#e5e7eb] !text-[var(--color-text-primary)] hover:!bg-[#e5e7eb]"
+                onClick={supportsTray ? handleMinimize : closeModal}
+                disabled={quitting}
+              >
                 {supportsTray ? '最小化到托盘' : '取消'}
               </Button>
-              <Button variant="danger" className="flex-1" onClick={handleQuit}>
-                直接退出
+              <Button
+                className="w-full"
+                onClick={handleQuitAppOnly}
+                loading={quittingAction === 'app-only'}
+                disabled={quitting}
+              >
+                仅退出应用
+              </Button>
+              <Button
+                variant="danger"
+                className="w-full"
+                onClick={handleQuitAppAndBrowsers}
+                loading={quittingAction === 'app-and-browser'}
+                disabled={quitting}
+              >
+                退出应用与浏览器
               </Button>
             </>
           )}

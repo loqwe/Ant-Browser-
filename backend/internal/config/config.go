@@ -10,12 +10,13 @@ import (
 )
 
 const (
-	DefaultMaxProfileLimit    = 20
-	StandardCDKeyProfileBonus = 10
-	GithubStarRewardKey       = "GITHUB_STAR_REWARD"
-	GithubStarProfileBonus    = 50
-	GithubStarProfileTotal    = DefaultMaxProfileLimit + GithubStarProfileBonus
-	DefaultLaunchServerPort   = 19876
+	DefaultMaxProfileLimit          = 20
+	StandardCDKeyProfileBonus       = 10
+	GithubStarRewardKey             = "GITHUB_STAR_REWARD"
+	GithubStarProfileBonus          = 50
+	GithubStarProfileTotal          = DefaultMaxProfileLimit + GithubStarProfileBonus
+	DefaultLaunchServerPort         = 19876
+	DefaultLaunchServerAPIKeyHeader = "X-Ant-Api-Key"
 )
 
 // RewardForUsedKey 返回指定兑换记录对应的永久额度奖励。
@@ -53,6 +54,14 @@ type LaunchServerConfig struct {
 	// Port 为对外暴露的固定入口端口。
 	// Launch API 与 CDP 代理共用此端口，便于外部工具固定接入。
 	Port int `yaml:"port"`
+	// Auth 为 Launch API 的可选本地认证配置。
+	Auth LaunchServerAuthConfig `yaml:"auth"`
+}
+
+type LaunchServerAuthConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	APIKey  string `yaml:"api_key"`
+	Header  string `yaml:"header"`
 }
 
 // Config 应用配置
@@ -108,6 +117,8 @@ type BrowserConfig struct {
 	DefaultFingerprintArgs []string               `yaml:"default_fingerprint_args"`
 	DefaultLaunchArgs      []string               `yaml:"default_launch_args"`
 	DefaultProxy           string                 `yaml:"default_proxy"`
+	StartReadyTimeoutMs    int                    `yaml:"start_ready_timeout_ms,omitempty"`
+	StartStableWindowMs    int                    `yaml:"start_stable_window_ms,omitempty"`
 	DefaultBookmarks       []BrowserBookmark      `yaml:"default_bookmarks,omitempty"`
 	Cores                  []BrowserCore          `yaml:"cores,omitempty"`
 	Proxies                []BrowserProxy         `yaml:"proxies,omitempty"`
@@ -331,6 +342,12 @@ func normalizeConfig(config *Config) {
 	if len(config.Browser.DefaultLaunchArgs) == 0 {
 		config.Browser.DefaultLaunchArgs = append([]string{}, defaultConfig.Browser.DefaultLaunchArgs...)
 	}
+	if config.Browser.StartReadyTimeoutMs <= 0 {
+		config.Browser.StartReadyTimeoutMs = defaultConfig.Browser.StartReadyTimeoutMs
+	}
+	if config.Browser.StartStableWindowMs <= 0 {
+		config.Browser.StartStableWindowMs = defaultConfig.Browser.StartStableWindowMs
+	}
 	if config.Browser.DefaultBookmarks == nil {
 		config.Browser.DefaultBookmarks = []BrowserBookmark{}
 	}
@@ -346,6 +363,10 @@ func normalizeConfig(config *Config) {
 
 	if config.LaunchServer.Port <= 0 {
 		config.LaunchServer.Port = defaultConfig.LaunchServer.Port
+	}
+	config.LaunchServer.Auth.APIKey = strings.TrimSpace(config.LaunchServer.Auth.APIKey)
+	if strings.TrimSpace(config.LaunchServer.Auth.Header) == "" {
+		config.LaunchServer.Auth.Header = defaultConfig.LaunchServer.Auth.Header
 	}
 }
 
@@ -388,6 +409,8 @@ func DefaultConfig() *Config {
 			DefaultFingerprintArgs: []string{"--fingerprint-brand=Chrome", "--fingerprint-platform=windows"},
 			DefaultLaunchArgs:      []string{"--disable-sync", "--no-first-run"},
 			DefaultProxy:           "",
+			StartReadyTimeoutMs:    3000,
+			StartStableWindowMs:    1200,
 		},
 		Logging: LoggingConfig{
 			Level:           "info",
@@ -413,6 +436,11 @@ func DefaultConfig() *Config {
 		},
 		LaunchServer: LaunchServerConfig{
 			Port: DefaultLaunchServerPort,
+			Auth: LaunchServerAuthConfig{
+				Enabled: false,
+				APIKey:  "",
+				Header:  DefaultLaunchServerAPIKeyHeader,
+			},
 		},
 	}
 }

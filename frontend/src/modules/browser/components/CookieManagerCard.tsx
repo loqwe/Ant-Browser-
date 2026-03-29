@@ -9,6 +9,7 @@ interface Props {
   profileId: string
   profileName: string
   running: boolean
+  ready: boolean
 }
 
 const formatExpires = (expires: number) => {
@@ -16,7 +17,7 @@ const formatExpires = (expires: number) => {
   return new Date(expires * 1000).toLocaleString('zh-CN')
 }
 
-export function CookieManagerCard({ profileId, profileName, running }: Props) {
+export function CookieManagerCard({ profileId, profileName, running, ready }: Props) {
   const [cookies, setCookies] = useState<CookieInfo[]>([])
   const [filterDomain, setFilterDomain] = useState('')
   const [loading, setLoading] = useState(false)
@@ -24,7 +25,7 @@ export function CookieManagerCard({ profileId, profileName, running }: Props) {
   const [showConfirm, setShowConfirm] = useState(false)
 
   const loadCookies = async () => {
-    if (!running) return
+    if (!ready) return
     setLoading(true)
     try {
       const list = await fetchBrowserCookies(profileId)
@@ -37,9 +38,9 @@ export function CookieManagerCard({ profileId, profileName, running }: Props) {
   }
 
   useEffect(() => {
-    if (running) loadCookies()
+    if (ready) loadCookies()
     else setCookies([])
-  }, [profileId, running])
+  }, [profileId, ready])
 
   const filteredCookies = useMemo(() => {
     if (!filterDomain.trim()) return cookies
@@ -102,15 +103,21 @@ export function CookieManagerCard({ profileId, profileName, running }: Props) {
     },
   ]
 
-  const subtitle = running
-    ? `共 ${cookies.length} 条${filterDomain ? `，已过滤 ${filteredCookies.length} 条` : ''}`
-    : '实例未运行，无法管理 Cookie'
+  const subtitle = !running
+    ? '实例未运行，无法管理 Cookie'
+    : !ready
+      ? '实例运行中，等待调试接口就绪后可管理 Cookie'
+      : `共 ${cookies.length} 条${filterDomain ? `，已过滤 ${filteredCookies.length} 条` : ''}`
 
   return (
     <Card title="Cookie 管理" subtitle={subtitle}>
       {!running ? (
         <p className="text-sm text-[var(--color-text-muted)] py-4 text-center">
           请先启动实例以查看 Cookie
+        </p>
+      ) : !ready ? (
+        <p className="text-sm text-[var(--color-text-muted)] py-4 text-center">
+          浏览器已启动，正在等待调试接口就绪
         </p>
       ) : (
         <div className="space-y-3">

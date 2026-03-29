@@ -29,6 +29,8 @@ export function CoreManagementPage() {
     defaultFingerprintArgs: [],
     defaultLaunchArgs: [],
     defaultProxy: '',
+    startReadyTimeoutMs: 3000,
+    startStableWindowMs: 1200,
   })
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
   const [settingsForm, setSettingsForm] = useState({
@@ -36,6 +38,8 @@ export function CoreManagementPage() {
     defaultProxy: '',
     defaultFingerprintArgs: '',
     defaultLaunchArgs: '',
+    startReadyTimeoutMs: 3000,
+    startStableWindowMs: 1200,
   })
   const [savingSettings, setSavingSettings] = useState(false)
 
@@ -350,6 +354,8 @@ export function CoreManagementPage() {
       defaultProxy: settings.defaultProxy,
       defaultFingerprintArgs: settings.defaultFingerprintArgs.join('\n'),
       defaultLaunchArgs: settings.defaultLaunchArgs.join('\n'),
+      startReadyTimeoutMs: settings.startReadyTimeoutMs,
+      startStableWindowMs: settings.startStableWindowMs,
     })
     setSettingsModalOpen(true)
   }
@@ -363,6 +369,8 @@ export function CoreManagementPage() {
         defaultProxy: settingsForm.defaultProxy.trim(),
         defaultFingerprintArgs: settingsForm.defaultFingerprintArgs.split('\n').map(s => s.trim()).filter(Boolean),
         defaultLaunchArgs: settingsForm.defaultLaunchArgs.split('\n').map(s => s.trim()).filter(Boolean),
+        startReadyTimeoutMs: Math.max(1000, Number(settingsForm.startReadyTimeoutMs) || 3000),
+        startStableWindowMs: Math.max(0, Number(settingsForm.startStableWindowMs) || 1200),
       }
       await saveBrowserSettings(newSettings)
       setSettings(newSettings)
@@ -431,6 +439,14 @@ export function CoreManagementPage() {
               <p className="text-sm text-[var(--color-text-primary)]">-</p>
             )}
           </div>
+          <div>
+            <p className="text-xs text-[var(--color-text-muted)] mb-1">启动就绪超时</p>
+            <p className="text-sm text-[var(--color-text-primary)]">{settings.startReadyTimeoutMs} ms</p>
+          </div>
+          <div>
+            <p className="text-xs text-[var(--color-text-muted)] mb-1">启动稳定窗口</p>
+            <p className="text-sm text-[var(--color-text-primary)]">{settings.startStableWindowMs} ms</p>
+          </div>
         </div>
       </Card>
 
@@ -489,6 +505,28 @@ export function CoreManagementPage() {
               placeholder="每行一个参数，如 --disable-sync"
             />
           </FormItem>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormItem label="启动就绪超时（毫秒）" hint="默认 3000，慢机器可调到 5000-10000">
+              <Input
+                type="number"
+                min={1000}
+                step={500}
+                value={settingsForm.startReadyTimeoutMs}
+                onChange={e => setSettingsForm(prev => ({ ...prev, startReadyTimeoutMs: Math.max(1000, Number(e.target.value) || 3000) }))}
+                placeholder="3000"
+              />
+            </FormItem>
+            <FormItem label="启动稳定窗口（毫秒）" hint="建议 1200-3000">
+              <Input
+                type="number"
+                min={0}
+                step={100}
+                value={settingsForm.startStableWindowMs}
+                onChange={e => setSettingsForm(prev => ({ ...prev, startStableWindowMs: Math.max(0, Number(e.target.value) || 1200) }))}
+                placeholder="1200"
+              />
+            </FormItem>
+          </div>
         </div>
       </Modal>
 

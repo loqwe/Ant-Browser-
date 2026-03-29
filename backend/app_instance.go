@@ -46,7 +46,7 @@ func (a *App) browserInstanceStartInternal(profileId string, extraLaunchArgs []s
 		return nil, err
 	}
 	if profile.Running {
-		if !isBrowserProfileLive(profile) {
+		if !isBrowserProfileLive(profile, a.browserMgr.BrowserProcesses[profileId]) {
 			log.Info("检测到实例运行状态已失效，准备重新启动",
 				logger.F("profile_id", profileId),
 				logger.F("pid", profile.Pid),
@@ -67,21 +67,17 @@ func (a *App) browserInstanceStartInternal(profileId string, extraLaunchArgs []s
 					return profile, startErr
 				}
 			}
-			if a.launchServer != nil {
+			if a.launchServer != nil && profile.DebugReady {
 				a.launchServer.SetActiveProfile(profile)
 			}
-			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "browser:instance:started", map[string]interface{}{
-					"profileId":   profile.ProfileId,
-					"profileName": profile.ProfileName,
-					"debugPort":   profile.DebugPort,
-					"pid":         profile.Pid,
-					"reused":      true,
-				})
-			}
+			a.emitBrowserInstanceStarted(profile, true)
 			return profile, nil
 		}
 	}
+	sanitizedProfileLaunchArgs, managedProfileArgs := sanitizeManagedLaunchArgs(profile.LaunchArgs)
+	sanitizedExtraLaunchArgs, managedExtraArgs := sanitizeManagedLaunchArgs(normalizedExtraLaunchArgs)
+	logManagedLaunchArgOverrides(log, profileId, "profile.launchArgs", managedProfileArgs)
+	logManagedLaunchArgOverrides(log, profileId, "start.extraLaunchArgs", managedExtraArgs)
 
 	proxyChanged := a.browserMgr.ApplyDefaults(profile)
 	if proxyChanged {
@@ -91,7 +87,7 @@ func (a *App) browserInstanceStartInternal(profileId string, extraLaunchArgs []s
 	chromeBinaryPath, err := a.browserMgr.ResolveChromeBinary(profile)
 	if err != nil {
 		startErr := fmt.Errorf("实例启动失败：%w", err)
-		log.Error("内核路径解析失败", logger.F("profile_id", profileId), logger.F("error", err), logger.F("reason", startErr.Error()))
+		log.Error("内核路径解析失败", logger.F("profile_id", profileId), logger.F("error", err.Error()), logger.F("reason", startErr.Error()))
 		profile.LastError = startErr.Error()
 		return profile, startErr
 	}
@@ -99,7 +95,7 @@ func (a *App) browserInstanceStartInternal(profileId string, extraLaunchArgs []s
 	userDataDir := a.browserMgr.ResolveUserDataDir(profile)
 	if err := os.MkdirAll(userDataDir, 0755); err != nil {
 		startErr := fmt.Errorf("实例启动失败：无法创建用户数据目录 %s。原因：%w。请检查目录权限或路径配置。", userDataDir, err)
-		log.Error("用户数据目录创建失败", logger.F("profile_id", profileId), logger.F("dir", userDataDir), logger.F("error", err), logger.F("reason", startErr.Error()))
+		log.Error("用户数据目录创建失败", logger.F("profile_id", profileId), logger.F("dir", userDataDir), logger.F("error", err.Error()), logger.F("reason", startErr.Error()))
 		profile.LastError = startErr.Error()
 		return profile, startErr
 	}
@@ -181,17 +177,21 @@ func (a *App) browserInstanceStartInternal(profileId string, extraLaunchArgs []s
 		log.Info("xray 桥接成功", logger.F("socks_url", socksURL))
 	}
 
-	debugPort, err := nextAvailablePort()
+	startReadyTimeout, startStableWindow := a.browserStartTimingSettings()
+	maxStartAttempts := browserStartAttemptCount()
+	totalReadyTimeout := time.Duration(maxStartAttempts) * startReadyTimeout
+	var lastStartErr error
+	assignedDebugPort, err := nextAvailablePort()
 	if err != nil {
 		startErr := fmt.Errorf("实例启动失败：本地调试端口分配失败。原因：%v。请关闭占用端口的程序后重试。", err)
-		log.Error("调试端口分配失败", logger.F("profile_id", profileId), logger.F("error", err), logger.F("reason", startErr.Error()))
+		log.Error("调试端口分配失败", logger.F("profile_id", profileId), logger.F("error", err.Error()), logger.F("reason", startErr.Error()))
 		profile.LastError = startErr.Error()
 		return profile, startErr
 	}
 
 	args := []string{
 		fmt.Sprintf("--user-data-dir=%s", userDataDir),
-		fmt.Sprintf("--remote-debugging-port=%d", debugPort),
+		fmt.Sprintf("--remote-debugging-port=%d", assignedDebugPort),
 		"--disable-session-crashed-bubble",
 	}
 
@@ -220,56 +220,110 @@ func (a *App) browserInstanceStartInternal(profileId string, extraLaunchArgs []s
 		args = append(args, fmt.Sprintf("--proxy-server=%s", effectiveProxy))
 	}
 	args = append(args, profile.FingerprintArgs...)
-	args = append(args, profile.LaunchArgs...)
-	args = append(args, normalizedExtraLaunchArgs...)
+	args = append(args, sanitizedProfileLaunchArgs...)
+	args = append(args, sanitizedExtraLaunchArgs...)
 	args = appendLaunchTargets(args, profile, normalizedStartURLs, skipDefaultStartURLs)
 
 	cmd := exec.Command(chromeBinaryPath, args...)
 	cmd.Dir = filepath.Dir(chromeBinaryPath)
+	monitor, err := newBrowserProcessMonitor(cmd)
+	if err != nil {
+		startErr := fmt.Errorf("实例启动失败：无法建立浏览器错误输出捕获。可执行文件：%s。原因：%v。", chromeBinaryPath, err)
+		log.Error("浏览器错误输出捕获初始化失败", logger.F("profile_id", profileId), logger.F("chrome", chromeBinaryPath), logger.F("error", err.Error()), logger.F("reason", startErr.Error()))
+		profile.LastError = startErr.Error()
+		return profile, startErr
+	}
 	if err := cmd.Start(); err != nil {
 		startErr := fmt.Errorf("%s", describeChromeProcessStartError(chromeBinaryPath, err))
-		log.Error("浏览器进程启动失败", logger.F("profile_id", profileId), logger.F("chrome", chromeBinaryPath), logger.F("error", err), logger.F("reason", startErr.Error()))
+		log.Error("浏览器进程启动失败", logger.F("profile_id", profileId), logger.F("chrome", chromeBinaryPath), logger.F("error", err.Error()), logger.F("reason", startErr.Error()))
 		profile.LastError = startErr.Error()
 		return profile, startErr
 	}
-	if err := waitBrowserDebugPortStable(debugPort, browserStartReadyTimeout, browserStartStableWindow); err != nil {
-		startErr := fmt.Errorf("%s", describeBrowserReadyTimeout(debugPort, browserStartReadyTimeout))
-		log.Error("浏览器启动未就绪", logger.F("profile_id", profileId), logger.F("chrome", chromeBinaryPath), logger.F("error", err), logger.F("reason", startErr.Error()))
-		_ = a.stopProcessCmd(cmd)
-		go func() {
-			_ = cmd.Wait()
-		}()
-		profile.LastError = startErr.Error()
-		return profile, startErr
+	monitor.Start()
+
+	for attempt := 1; attempt <= maxStartAttempts; attempt++ {
+		stableDebugPort, readyErr := waitBrowserDebugPortStable(assignedDebugPort, userDataDir, startReadyTimeout, startStableWindow, monitor)
+		if readyErr == nil {
+			a.markProfileRunningLocked(profileId, profile, cmd, cmd.Process.Pid, stableDebugPort, true, "")
+			if acquiredXrayBridgeKey != "" {
+				a.bindProfileXrayBridge(profileId, acquiredXrayBridgeKey)
+				releaseXrayBridge = false
+			}
+
+			log.Info("实例启动",
+				logger.F("profile_id", profileId),
+				logger.F("debug_port", stableDebugPort),
+				logger.F("pid", profile.Pid),
+				logger.F("proxy", effectiveProxy),
+				logger.F("attempt", attempt),
+				logger.F("max_attempts", maxStartAttempts),
+				logger.F("args", strings.Join(args, " ")),
+			)
+			a.emitBrowserInstanceStarted(profile, false)
+
+			go a.waitBrowserProcess(profileId, monitor)
+			return profile, nil
+		}
+
+		startErr := fmt.Errorf("%s", describeBrowserReadyFailure(chromeBinaryPath, assignedDebugPort, totalReadyTimeout, readyErr))
+		lastStartErr = startErr
+		log.Error("浏览器启动未就绪",
+			logger.F("profile_id", profileId),
+			logger.F("chrome", chromeBinaryPath),
+			logger.F("debug_port", assignedDebugPort),
+			logger.F("attempt", attempt),
+			logger.F("max_attempts", maxStartAttempts),
+			logger.F("error", readyErr.Error()),
+			logger.F("reason", startErr.Error()),
+		)
+
+		if attempt < maxStartAttempts && shouldRetryBrowserReadyFailure(readyErr) {
+			log.Warn("浏览器启动未就绪，继续检测",
+				logger.F("profile_id", profileId),
+				logger.F("debug_port", assignedDebugPort),
+				logger.F("attempt", attempt),
+				logger.F("next_attempt", attempt+1),
+				logger.F("max_attempts", maxStartAttempts),
+				logger.F("timeout_ms", startReadyTimeout.Milliseconds()),
+			)
+			continue
+		}
+
+		break
 	}
 
-	a.browserMgr.BrowserProcesses[profileId] = cmd
-	profile.Running = true
-	profile.DebugPort = debugPort
-	profile.Pid = cmd.Process.Pid
-	profile.LastStartAt = time.Now().Format(time.RFC3339)
-	profile.LastError = ""
-	if acquiredXrayBridgeKey != "" {
-		a.bindProfileXrayBridge(profileId, acquiredXrayBridgeKey)
-		releaseXrayBridge = false
-	}
-	if a.launchServer != nil {
-		a.launchServer.SetActiveProfile(profile)
+	pendingStartNotice := ""
+	if shouldKeepBrowserRunningPendingDebugReady(assignedDebugPort, monitor) {
+		runtimeWarning := browserDebugPendingWarning(totalReadyTimeout)
+		pendingStartNotice = browserDebugPendingStartNotice(totalReadyTimeout)
+		a.markProfileRunningLocked(profileId, profile, cmd, cmd.Process.Pid, assignedDebugPort, false, runtimeWarning)
+		if acquiredXrayBridgeKey != "" {
+			a.bindProfileXrayBridge(profileId, acquiredXrayBridgeKey)
+			releaseXrayBridge = false
+		}
+
+		log.Warn("浏览器窗口已启动，但调试接口在等待窗口内未就绪，转入后台附着",
+			logger.F("profile_id", profileId),
+			logger.F("debug_port", assignedDebugPort),
+			logger.F("pid", profile.Pid),
+			logger.F("max_attempts", maxStartAttempts),
+			logger.F("warning", runtimeWarning),
+		)
+		a.emitBrowserInstanceStarted(profile, false)
+		go a.waitBrowserProcess(profileId, monitor)
+		go a.waitBrowserDebugReadyAsync(profileId, assignedDebugPort, browserAsyncDebugAttachTimeout)
 	}
 
-	log.Info("实例启动", logger.F("profile_id", profileId), logger.F("debug_port", debugPort), logger.F("pid", profile.Pid), logger.F("proxy", effectiveProxy), logger.F("args", strings.Join(args, " ")))
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "browser:instance:started", map[string]interface{}{
-			"profileId":   profile.ProfileId,
-			"profileName": profile.ProfileName,
-			"debugPort":   profile.DebugPort,
-			"pid":         profile.Pid,
-			"reused":      false,
-		})
+	if pendingStartNotice != "" {
+		profile.LastError = pendingStartNotice
+		return profile, fmt.Errorf("%s", pendingStartNotice)
 	}
 
-	go a.waitBrowserProcess(profileId, cmd)
-	return profile, nil
+	if lastStartErr != nil {
+		profile.LastError = lastStartErr.Error()
+		return profile, lastStartErr
+	}
+	return profile, fmt.Errorf("实例启动失败：浏览器在等待窗口内仍未就绪")
 }
 
 func (a *App) BrowserInstanceStop(profileId string) (*BrowserProfile, error) {
@@ -475,8 +529,8 @@ func (a *App) BrowserInstanceGetTabs(profileId string) []BrowserTab {
 	}
 }
 
-func (a *App) waitBrowserProcess(profileId string, cmd *exec.Cmd) {
-	err := cmd.Wait()
+func (a *App) waitBrowserProcess(profileId string, monitor *browserProcessMonitor) {
+	err := monitor.Wait()
 
 	log := logger.New("Browser")
 	debugPort := 0
@@ -492,10 +546,21 @@ func (a *App) waitBrowserProcess(profileId string, cmd *exec.Cmd) {
 	}
 	a.browserMgr.Mutex.Unlock()
 
-	if wasRunning && debugPort > 0 && canConnectDebugPort(debugPort, 250*time.Millisecond) {
+	if wasRunning && debugPort > 0 {
+		snapshot, changed := a.waitForBrowserDebugReady(profileId, debugPort, browserLauncherDetachGraceWindow)
+		if snapshot != nil {
+			if changed {
+				log.Info("浏览器启动器进程退出后，调试接口延迟就绪",
+					logger.F("profile_id", profileId),
+					logger.F("debug_port", debugPort),
+				)
+				a.emitBrowserInstanceUpdated(snapshot)
+			}
+		}
+
 		a.browserMgr.Mutex.Lock()
 		profile, exists = a.browserMgr.Profiles[profileId]
-		if exists && profile.Running && profile.DebugPort == debugPort {
+		if exists && profile.Running && profile.DebugPort == debugPort && profile.DebugReady && canConnectDebugPort(debugPort, 250*time.Millisecond) {
 			delete(a.browserMgr.BrowserProcesses, profileId)
 			profile.Pid = 0
 			shouldMonitorDetached = true
@@ -635,20 +700,15 @@ func appendLaunchTargets(args []string, profile *BrowserProfile, startURLs []str
 	return args
 }
 
-func isBrowserProfileLive(profile *BrowserProfile) bool {
-	if profile == nil || !profile.Running || profile.DebugPort <= 0 {
-		return false
-	}
-	return canConnectDebugPort(profile.DebugPort, 250*time.Millisecond)
-}
-
 func (a *App) markProfileStoppedLocked(profileId string, profile *BrowserProfile) {
 	if profile == nil {
 		return
 	}
 	profile.Running = false
+	profile.DebugReady = false
 	profile.Pid = 0
 	profile.DebugPort = 0
+	profile.RuntimeWarning = ""
 	profile.LastStopAt = time.Now().Format(time.RFC3339)
 	delete(a.browserMgr.BrowserProcesses, profileId)
 	a.releaseProfileXrayBridge(profileId)
@@ -671,7 +731,9 @@ func (a *App) openBrowserWindowForRunningProfile(profile *BrowserProfile, extraL
 	args := []string{
 		fmt.Sprintf("--user-data-dir=%s", userDataDir),
 	}
-	args = append(args, extraLaunchArgs...)
+	sanitizedExtraLaunchArgs, managedExtraArgs := sanitizeManagedLaunchArgs(extraLaunchArgs)
+	logManagedLaunchArgOverrides(logger.New("Browser"), profile.ProfileId, "running-window.extraLaunchArgs", managedExtraArgs)
+	args = append(args, sanitizedExtraLaunchArgs...)
 	if len(startURLs) > 0 {
 		args = append(args, startURLs...)
 	} else {

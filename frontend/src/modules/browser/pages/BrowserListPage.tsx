@@ -10,7 +10,7 @@ import type { InstanceFilters } from '../components/InstanceFilterBar'
 import { KeywordsModal } from '../components/KeywordsModal'
 import { EventsOn, BrowserOpenURL } from '../../../wailsjs/runtime/runtime'
 import { PROJECT_GITHUB_URL } from '../../../config/links'
-import { resolveActionErrorMessage } from '../utils/actionErrors'
+import { resolveActionErrorMessage, resolveActionFeedback } from '../utils/actionErrors'
 import {
   copyBrowserProfile,
   deleteBrowserCore,
@@ -73,12 +73,15 @@ function BatchToolbar({
   )
 }
 
-const resolveProfileStatus = (running: boolean, starting: boolean, stopping: boolean) => {
+const resolveProfileStatus = (running: boolean, debugReady: boolean, starting: boolean, stopping: boolean) => {
   if (starting) {
     return { variant: 'info' as const, label: '启动中' }
   }
   if (stopping) {
     return { variant: 'default' as const, label: '停止中' }
+  }
+  if (running && !debugReady) {
+    return { variant: 'info' as const, label: '运行中（待就绪）' }
   }
   if (running) {
     return { variant: 'success' as const, label: '运行中' }
@@ -276,7 +279,14 @@ export function BrowserListPage() {
 
   // 基础配置弹窗
   const [settingsModalOpen, setSettingsModalOpen] = useState(false)
-  const [settings, setSettings] = useState<BrowserSettings>({ userDataRoot: 'data', defaultFingerprintArgs: [], defaultLaunchArgs: [], defaultProxy: '' })
+  const [settings, setSettings] = useState<BrowserSettings>({
+    userDataRoot: 'data',
+    defaultFingerprintArgs: [],
+    defaultLaunchArgs: [],
+    defaultProxy: '',
+    startReadyTimeoutMs: 3000,
+    startStableWindowMs: 1200,
+  })
   const [fingerprintText, setFingerprintText] = useState('')
   const [launchText, setLaunchText] = useState('')
   const [savingSettings, setSavingSettings] = useState(false)
@@ -409,6 +419,9 @@ export function BrowserListPage() {
       }
       void loadProfiles({ silent: true, syncRuntimeState: true })
     })
+    const offUpdated = EventsOn('browser:instance:updated', () => {
+      void loadProfiles({ silent: true, syncRuntimeState: true })
+    })
     const offStopped = EventsOn('browser:instance:stopped', (payload: any) => {
       const profileId = typeof payload === 'string' ? payload : payload?.profileId
       if (profileId) {
@@ -434,6 +447,7 @@ export function BrowserListPage() {
     return () => {
       window.clearInterval(timer)
       offStarted?.()
+      offUpdated?.()
       offStopped?.()
       offCrashed?.()
     }
@@ -476,7 +490,7 @@ export function BrowserListPage() {
   const isProfileBusy = (profileId: string) => isProfileStarting(profileId) || isProfileStopping(profileId)
 
   const getProfileStatus = (profile: BrowserProfile) => (
-    resolveProfileStatus(profile.running, isProfileStarting(profile.profileId), isProfileStopping(profile.profileId))
+    resolveProfileStatus(profile.running, profile.debugReady, isProfileStarting(profile.profileId), isProfileStopping(profile.profileId))
   )
 
   const filteredProfiles = useMemo(() => {
@@ -538,10 +552,19 @@ export function BrowserListPage() {
 
       const startedProfile = await startBrowserInstance(profileId)
       mergeProfileState(startedProfile)
-      toast.success(`实例已启动${startedProfile?.profileName ? `：${startedProfile.profileName}` : ''}`)
+      if (startedProfile?.running && !startedProfile.debugReady && startedProfile.runtimeWarning) {
+        toast.warning(startedProfile.runtimeWarning)
+      } else {
+        toast.success(`实例已启动${startedProfile?.profileName ? `：${startedProfile.profileName}` : ''}`)
+      }
       await loadProfiles({ silent: true, syncRuntimeState: true })
     } catch (error: any) {
-      setOpError(resolveActionErrorMessage(error, '实例启动失败'))
+      const feedback = resolveActionFeedback(error, '实例启动失败')
+      if (feedback.tone === 'warning') {
+        toast.warning(feedback.message)
+      } else {
+        toast.error(feedback.message)
+      }
       await loadProfiles({ silent: true, syncRuntimeState: true })
     } finally {
       updatePendingIds(setStartingIds, profileId, false)
@@ -571,7 +594,12 @@ export function BrowserListPage() {
       toast.success(`实例已重启${restartedProfile?.profileName ? `：${restartedProfile.profileName}` : ''}`)
       await loadProfiles({ silent: true, syncRuntimeState: true })
     } catch (error: any) {
-      setOpError(resolveActionErrorMessage(error, '实例重启失败'))
+      const feedback = resolveActionFeedback(error, '实例重启失败')
+      if (feedback.tone === 'warning') {
+        toast.warning(feedback.message)
+      } else {
+        setOpError(feedback.message)
+      }
       await loadProfiles({ silent: true, syncRuntimeState: true })
     } finally {
       updatePendingIds(setStoppingIds, profileId, false)
@@ -607,7 +635,8 @@ export function BrowserListPage() {
     const ids = Array.from(selectedIds)
     if (ids.length === 0) return
     setBatchLoading(true)
-    let success = 0, failed = 0
+    let success = 0, pending = 0, failed = 0
+    const pendingMessages: string[] = []
     const failureMessages: string[] = []
     for (const id of ids) {
       const profile = profiles.find(p => p.profileId === id)
@@ -618,18 +647,32 @@ export function BrowserListPage() {
         mergeProfileState(startedProfile)
         success++
       } catch (error: any) {
-        failed++
-        failureMessages.push(`${profile.profileName}：${resolveActionErrorMessage(error, '实例启动失败')}`)
+        const feedback = resolveActionFeedback(error, '实例启动失败')
+        if (feedback.pendingAttach) {
+          pending++
+          pendingMessages.push(`${profile.profileName}：${feedback.message}`)
+        } else {
+          failed++
+          failureMessages.push(`${profile.profileName}：${feedback.message}`)
+        }
       } finally {
         updatePendingIds(setStartingIds, id, false)
       }
     }
     setBatchLoading(false)
-    toast.success(`批量启动完成：成功 ${success}${failed > 0 ? `，失败 ${failed}` : ''}`)
+    const summary = [`成功 ${success}`]
+    if (pending > 0) summary.push(`待接管 ${pending}`)
+    if (failed > 0) summary.push(`失败 ${failed}`)
+    toast.success(`批量启动完成：${summary.join('，')}`)
+    if (pendingMessages.length > 0) {
+      const preview = pendingMessages.slice(0, 3)
+      const more = pendingMessages.length > preview.length ? `\n另有 ${pendingMessages.length - preview.length} 个实例已打开窗口，仍在后台接管。` : ''
+      toast.warning(`以下实例已打开窗口，仍在后台接管：\n${preview.join('\n')}${more}`)
+    }
     if (failureMessages.length > 0) {
       const preview = failureMessages.slice(0, 3)
       const more = failureMessages.length > preview.length ? `\n另有 ${failureMessages.length - preview.length} 个实例启动失败，请逐个检查。` : ''
-      setOpError(`以下实例启动失败：\n${preview.join('\n')}${more}`)
+      toast.error(`以下实例启动失败：\n${preview.join('\n')}${more}`)
     }
     loadProfiles()
   }
@@ -1147,6 +1190,28 @@ export function BrowserListPage() {
           <FormItem label="默认代理">
             <Input value={settings.defaultProxy} onChange={e => setSettings(prev => ({ ...prev, defaultProxy: e.target.value }))} placeholder="http://127.0.0.1:7890" />
           </FormItem>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <FormItem label="启动就绪超时（毫秒）" hint="默认 3000，慢机器可调到 5000-10000">
+              <Input
+                type="number"
+                min={1000}
+                step={500}
+                value={settings.startReadyTimeoutMs}
+                onChange={e => setSettings(prev => ({ ...prev, startReadyTimeoutMs: Math.max(1000, Number(e.target.value) || 3000) }))}
+                placeholder="3000"
+              />
+            </FormItem>
+            <FormItem label="启动稳定窗口（毫秒）" hint="建议 1200-3000">
+              <Input
+                type="number"
+                min={0}
+                step={100}
+                value={settings.startStableWindowMs}
+                onChange={e => setSettings(prev => ({ ...prev, startStableWindowMs: Math.max(0, Number(e.target.value) || 1200) }))}
+                placeholder="1200"
+              />
+            </FormItem>
+          </div>
         </div>
       </Modal>
 

@@ -297,19 +297,19 @@ function Assert-RuntimeHashes {
             continue
         }
         if ($expectedHash -eq "" -or $expectedHash.Contains("todo_replace_with_sha256")) {
-            $errors.Add("$relativePath: sha256 is not initialized")
+            $errors.Add("${relativePath}: sha256 is not initialized")
             continue
         }
 
         $fullPath = Join-Path $repoRoot ($relativePath -replace '/', [System.IO.Path]::DirectorySeparatorChar)
         if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
-            $errors.Add("$relativePath: file not found")
+            $errors.Add("${relativePath}: file not found")
             continue
         }
 
         $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $fullPath).Hash.ToLowerInvariant()
         if ($actualHash -ne $expectedHash) {
-            $errors.Add("$relativePath: sha256 mismatch (expected $expectedHash, got $actualHash)")
+            $errors.Add("${relativePath}: sha256 mismatch (expected $expectedHash, got $actualHash)")
         }
     }
 

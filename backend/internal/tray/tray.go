@@ -14,8 +14,9 @@ var iconData []byte
 
 // Callbacks 托盘回调
 type Callbacks struct {
-	OnShow func()
-	OnQuit func()
+	OnShow        func()
+	OnQuitAppOnly func()
+	OnQuit        func()
 }
 
 // Run 启动系统托盘（阻塞，需在独立 goroutine 中调用）。
@@ -31,7 +32,8 @@ func Run(cb Callbacks) {
 
 		mShow := systray.AddMenuItem("显示窗口", "显示主窗口")
 		systray.AddSeparator()
-		mQuit := systray.AddMenuItem("退出", "退出应用")
+		mQuitAppOnly := systray.AddMenuItem("仅退出应用", "关闭客户端，保留已打开的浏览器")
+		mQuit := systray.AddMenuItem("退出应用与浏览器", "退出应用并关闭当前打开的浏览器")
 
 		systray.SetOnClick(func(menu systray.IMenu) {
 			if cb.OnShow != nil {
@@ -54,6 +56,13 @@ func Run(cb Callbacks) {
 		mShow.Click(func() {
 			if cb.OnShow != nil {
 				cb.OnShow()
+			}
+		})
+
+		mQuitAppOnly.Click(func() {
+			systray.Quit()
+			if cb.OnQuitAppOnly != nil {
+				cb.OnQuitAppOnly()
 			}
 		})
 

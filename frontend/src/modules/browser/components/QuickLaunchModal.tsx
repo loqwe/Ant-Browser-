@@ -3,7 +3,7 @@ import { Keyboard, Play, Search, Tag } from 'lucide-react'
 import { Badge, Button, Modal, toast } from '../../../shared/components'
 import { fetchBrowserProfiles, fetchGroups, startBrowserInstanceByCode } from '../api'
 import type { BrowserGroupWithCount, BrowserProfile } from '../types'
-import { resolveActionErrorMessage } from '../utils/actionErrors'
+import { resolveActionFeedback } from '../utils/actionErrors'
 
 interface QuickLaunchModalProps {
   open: boolean
@@ -286,7 +286,12 @@ export function QuickLaunchModal({ open, onClose }: QuickLaunchModalProps) {
       onClose()
       return true
     } catch (error: any) {
-      toast.error(resolveActionErrorMessage(error, '按 Code 启动失败'))
+      const feedback = resolveActionFeedback(error, '按 Code 启动失败')
+      if (feedback.tone === 'warning') {
+        toast.warning(feedback.message)
+      } else {
+        toast.error(feedback.message)
+      }
       return false
     } finally {
       setStartingCode('')

@@ -3,9 +3,15 @@ import { BookOpen, Download, Globe, Keyboard, Layers, Monitor, Rocket } from 'lu
 import { Button, Card } from '../../../shared/components'
 import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime'
 import type { ReactNode } from 'react'
-import { fetchLaunchServerInfo } from '../api'
+import { fetchLaunchServerInfo, type LaunchServerInfo } from '../api'
 
 const DEFAULT_LAUNCH_BASE_URL = 'http://127.0.0.1:19876'
+const DEFAULT_API_AUTH: LaunchServerInfo['apiAuth'] = {
+  requested: false,
+  configured: false,
+  enabled: false,
+  header: 'X-Ant-Api-Key',
+}
 
 function StepCard({
   icon,
@@ -45,9 +51,26 @@ function LinkButton({ url, children }: { url: string; children: ReactNode }) {
   )
 }
 
+function buildLaunchCodeCurlSample(baseUrl: string, apiAuth: LaunchServerInfo['apiAuth']): string {
+  const authComment = apiAuth.enabled
+    ? `# 如果已启用认证，请追加请求头：${apiAuth.header}: <your-api-key>\n`
+    : ''
+  const authHeaderLine = apiAuth.enabled ? `  -H "${apiAuth.header}: <your-api-key>" \\\n` : ''
+  const getSuffix = apiAuth.enabled ? ` \\\n  -H "${apiAuth.header}: <your-api-key>"` : ''
+
+  return `${authComment}# 按 Code 启动
+curl ${baseUrl}/api/launch/A3F9K2${getSuffix}
+
+# 带参数启动
+curl -X POST ${baseUrl}/api/launch \\
+  -H "Content-Type: application/json" \\
+${authHeaderLine}  -d '{"code":"A3F9K2","launchArgs":["--window-size=1280,800"]}'`
+}
+
 export function UsageTutorialPage() {
   const [launchBaseUrl, setLaunchBaseUrl] = useState(DEFAULT_LAUNCH_BASE_URL)
   const [launchServerReady, setLaunchServerReady] = useState(false)
+  const [apiAuth, setApiAuth] = useState<LaunchServerInfo['apiAuth']>(DEFAULT_API_AUTH)
 
   useEffect(() => {
     let disposed = false
@@ -59,6 +82,7 @@ export function UsageTutorialPage() {
           setLaunchBaseUrl(info.baseUrl)
         }
         setLaunchServerReady(info.ready)
+        setApiAuth(info.apiAuth)
       })
       .catch(() => {})
 
@@ -67,13 +91,7 @@ export function UsageTutorialPage() {
     }
   }, [])
 
-  const launchCodeCurlSample = `# 按 Code 启动
-curl ${launchBaseUrl}/api/launch/A3F9K2
-
-# 带参数启动
-curl -X POST ${launchBaseUrl}/api/launch \\
-  -H "Content-Type: application/json" \\
-  -d '{"code":"A3F9K2","launchArgs":["--window-size=1280,800"]}'`
+  const launchCodeCurlSample = buildLaunchCodeCurlSample(launchBaseUrl, apiAuth)
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -145,6 +163,13 @@ Esc            关闭弹窗`}
         <p>
           当前 Launch 地址：<code>{launchBaseUrl}</code>
           {!launchServerReady ? '（服务启动后会自动刷新）' : ''}
+        </p>
+        <p>
+          {apiAuth.enabled
+            ? <>当前 API 认证已启用，请为所有 <code>/api/*</code> 请求追加 <code>{apiAuth.header}: &lt;your-api-key&gt;</code>。</>
+            : apiAuth.requested && !apiAuth.configured
+              ? <>当前配置要求启用 API 认证，但 <code>api_key</code> 为空，认证尚未生效。</>
+              : <>当前 API 认证未启用；如需开启，可在 <code>config.yaml</code> 的 <code>launch_server.auth</code> 下配置。</>}
         </p>
         <pre className="text-xs font-mono bg-[var(--color-bg-secondary)] border border-[var(--color-border-muted)] rounded-lg p-3 overflow-x-auto">
 {launchCodeCurlSample}

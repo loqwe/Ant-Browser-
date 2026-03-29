@@ -16,7 +16,9 @@ export interface BrowserProfile {
   groupId?: string
   running: boolean
   debugPort: number
+  debugReady: boolean
   pid: number
+  runtimeWarning: string
   lastError: string
   createdAt: string
   updatedAt: string
@@ -50,6 +52,8 @@ export interface BrowserSettings {
   defaultFingerprintArgs: string[]
   defaultLaunchArgs: string[]
   defaultProxy: string
+  startReadyTimeoutMs: number
+  startStableWindowMs: number
 }
 
 export interface BrowserCore {
