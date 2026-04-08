@@ -16,6 +16,20 @@ const PROXY_GLOBAL_REFRESH_INTERVAL_KEY = 'browser:proxyPool:globalRefreshInterv
 const PROXY_LATENCY_CACHE_TTL_MS = 12 * 60 * 60 * 1000
 const PROXY_IP_HEALTH_CACHE_TTL_MS = 12 * 60 * 60 * 1000
 
+function getTimeAgo(dateString: string): string {
+  if (!dateString) return ''
+  const t = Date.parse(dateString)
+  if (!Number.isFinite(t)) return ''
+  const diffMs = Date.now() - t
+  if (diffMs < 60000) return '刚刚'
+  const diffMins = Math.floor(diffMs / 60000)
+  if (diffMins < 60) return `${diffMins} 分钟前`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours} 小时前`
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays} 天前`
+}
+
 const BUILTIN_PROXIES: BrowserProxy[] = [
   { proxyId: '__direct__', proxyName: '直连（不走代理）', proxyConfig: 'direct://' },
   { proxyId: '__local__', proxyName: '本地代理', proxyConfig: 'http://127.0.0.1:7890' },
@@ -692,6 +706,7 @@ function writeIPHealthCache(data: Record<string, ProxyIPHealthResult>) {
 }
 
 export function ProxyPoolPage() {
+  const [activeTab, setActiveTab] = useState<'proxies' | 'subscriptions'>('subscriptions')
   const [proxies, setProxies] = useState<BrowserProxy[]>([])
   const [displayList, setDisplayList] = useState<ProxyDisplayInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -1539,106 +1554,225 @@ export function ProxyPoolPage() {
     : !!directImportForm.server.trim() && !!directImportForm.port.trim()
 
   return (
-    <div className="space-y-5 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">代理池配置</h1>
-          <p className="text-sm text-[var(--color-text-muted)] mt-1">管理代理配置，支持 Clash 订阅、HTTP、HTTPS、SOCKS5</p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => void handleRefreshAllSources(false)}
-            loading={refreshingAllSources}
-            disabled={!hasURLImportSources}
+    <div className="flex flex-col h-full animate-fade-in relative z-0 pb-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex gap-2 p-1 bg-[var(--color-bg-secondary)] rounded-lg">
+          <button
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'proxies' ? 'bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'}`}
+            onClick={() => setActiveTab('proxies')}
           >
-            刷新订阅
-          </Button>
-          <Button size="sm" variant="secondary" onClick={handleCheckAllIPHealth} loading={checkingAllIPHealth} disabled={filteredList.length === 0}>检测IP健康</Button>
-          <Button size="sm" variant="secondary" onClick={handleTestAll} loading={testingAll} disabled={filteredList.length === 0}>测试全部</Button>
-          <Button size="sm" onClick={() => setImportModalOpen(true)}>导入代理</Button>
+            代理
+          </button>
+          <button
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'subscriptions' ? 'bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] shadow-sm' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'}`}
+            onClick={() => setActiveTab('subscriptions')}
+          >
+            订阅
+          </button>
         </div>
+        
+        {activeTab === 'proxies' && (
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void handleRefreshAllSources(false)}
+              loading={refreshingAllSources}
+              disabled={!hasURLImportSources}
+            >
+              刷新订阅
+            </Button>
+            <Button size="sm" variant="secondary" onClick={handleCheckAllIPHealth} loading={checkingAllIPHealth} disabled={filteredList.length === 0}>检测IP健康</Button>
+            <Button size="sm" variant="secondary" onClick={handleTestAll} loading={testingAll} disabled={filteredList.length === 0}>测试全部</Button>
+            <Button size="sm" onClick={() => setImportModalOpen(true)}>导入代理</Button>
+          </div>
+        )}
       </div>
 
-      <Card>
-        <div className="flex items-center gap-3 mb-4">
-          <Input
-            value={filterKeyword}
-            onChange={e => setFilterKeyword(e.target.value)}
-            placeholder="搜索名称或服务器..."
-            style={{ width: '220px' }}
-          />
-          <select
-            value={filterProtocol}
-            onChange={e => setFilterProtocol(e.target.value)}
-            className="px-3 py-1.5 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
-          >
-            {protocolOptions.map(p => (
-              <option key={p} value={p}>{p === 'all' ? '全部协议' : p.toUpperCase()}</option>
-            ))}
-          </select>
-          <select
-            value={filterGroup}
-            onChange={e => setFilterGroup(e.target.value)}
-            className="px-3 py-1.5 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
-          >
-            <option value="all">全部分组</option>
-            {groups.map(g => <option key={g} value={g}>{g}</option>)}
-          </select>
-          {(filterProtocol !== 'all' || filterKeyword || filterGroup !== 'all') && (
-            <Button size="sm" variant="ghost" onClick={() => { setFilterProtocol('all'); setFilterKeyword(''); setFilterGroup('all') }}>清除筛选</Button>
-          )}
-          <div className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5">
-            <span className="text-xs text-[var(--color-text-muted)]">全局自动刷新</span>
-            <Switch
-              checked={globalAutoRefreshEnabled}
-              onChange={(checked) => setGlobalAutoRefreshEnabled(checked)}
-            />
+      {activeTab === 'proxies' ? (
+        <Card>
+          <div className="flex items-center gap-3 mb-4">
             <Input
-              type="number"
-              min={5}
-              max={1440}
-              value={globalRefreshIntervalM}
-              onChange={e => setGlobalRefreshIntervalM(e.target.value)}
-              className="w-24"
-              disabled={!globalAutoRefreshEnabled}
+              value={filterKeyword}
+              onChange={e => setFilterKeyword(e.target.value)}
+              placeholder="搜索名称或服务器..."
+              style={{ width: '220px' }}
             />
-            <span className="text-xs text-[var(--color-text-muted)]">分钟</span>
-          </div>
-          <div className="flex-1" />
-          {filteredList.length > 0 && (
-            <label className="flex items-center gap-1.5 text-sm text-[var(--color-text-muted)] cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={allFilteredSelected}
-                ref={el => { if (el) el.indeterminate = someFilteredSelected && !allFilteredSelected }}
-                onChange={handleToggleAll}
-                className="w-4 h-4 rounded border-[var(--color-border)] accent-[var(--color-primary)] cursor-pointer"
+            <select
+              value={filterProtocol}
+              onChange={e => setFilterProtocol(e.target.value)}
+              className="px-3 py-1.5 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+            >
+              {protocolOptions.map(p => (
+                <option key={p} value={p}>{p === 'all' ? '全部协议' : p.toUpperCase()}</option>
+              ))}
+            </select>
+            <select
+              value={filterGroup}
+              onChange={e => setFilterGroup(e.target.value)}
+              className="px-3 py-1.5 text-sm rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+            >
+              <option value="all">全部分组</option>
+              {groups.map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
+            {(filterProtocol !== 'all' || filterKeyword || filterGroup !== 'all') && (
+              <Button size="sm" variant="ghost" onClick={() => { setFilterProtocol('all'); setFilterKeyword(''); setFilterGroup('all') }}>清除筛选</Button>
+            )}
+            <div className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5">
+              <span className="text-xs text-[var(--color-text-muted)]">全局自动刷新</span>
+              <Switch
+                checked={globalAutoRefreshEnabled}
+                onChange={(checked) => setGlobalAutoRefreshEnabled(checked)}
               />
-              全选
-            </label>
-          )}
-          {selectedCount > 0 && (
-            <Button size="sm" variant="danger" onClick={() => setBatchDeleteConfirmOpen(true)}>
-              删除所选 ({selectedCount})
+              <Input
+                type="number"
+                min={5}
+                max={1440}
+                value={globalRefreshIntervalM}
+                onChange={e => setGlobalRefreshIntervalM(e.target.value)}
+                className="w-24"
+                disabled={!globalAutoRefreshEnabled}
+              />
+              <span className="text-xs text-[var(--color-text-muted)]">分钟</span>
+            </div>
+            <div className="flex-1" />
+            {filteredList.length > 0 && (
+              <label className="flex items-center gap-1.5 text-sm text-[var(--color-text-muted)] cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={allFilteredSelected}
+                  ref={el => { if (el) el.indeterminate = someFilteredSelected && !allFilteredSelected }}
+                  onChange={handleToggleAll}
+                  className="w-4 h-4 rounded border-[var(--color-border)] accent-[var(--color-primary)] cursor-pointer"
+                />
+                全选
+              </label>
+            )}
+            {selectedCount > 0 && (
+              <Button size="sm" variant="danger" onClick={() => setBatchDeleteConfirmOpen(true)}>
+                删除所选 ({selectedCount})
+              </Button>
+            )}
+          </div>
+          <Table
+            columns={columns}
+            data={filteredList}
+            rowKey="proxyId"
+            loading={loading}
+            emptyText="暂无代理配置，点击上方按钮添加或导入"
+            sortColumn={sortColumn}
+            sortOrder={sortOrder}
+            onSort={({ column, order }) => {
+              setSortColumn(column)
+              setSortOrder(order)
+            }}
+          />
+        </Card>
+      ) : (
+        <div className="flex flex-col gap-5 flex-1">
+          {/* 订阅管理页：顶部输入框及按键 */}
+          <div className="flex items-center gap-3 bg-[var(--color-bg-primary)] p-2 px-3 rounded-lg border border-[var(--color-border)] shadow-sm h-14">
+            <div className="flex-1 flex items-center bg-[var(--color-bg-secondary)] rounded-md border border-transparent focus-within:border-[var(--color-primary)] px-3 py-2 transition-all">
+              <input
+                type="text"
+                value={importUrl}
+                onChange={(e) => setImportUrl(e.target.value)}
+                placeholder="订阅文件链接"
+                className="flex-1 bg-transparent border-none outline-none text-sm text-[var(--color-text-primary)]"
+              />
+              <button 
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors ml-2" 
+                title="粘贴"
+                onClick={async () => {
+                   try { 
+                     const text = await navigator.clipboard.readText();
+                     if (text) setImportUrl(text);
+                   } catch { /* ignore */ }
+                }}
+              >
+                📋
+              </button>
+            </div>
+            <Button 
+                variant="secondary" 
+                className="px-6 h-9 font-normal bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-colors rounded-md"
+                onClick={() => {
+                  if(!importUrl.trim()){ toast.error('请输入订阅链接'); return; }
+                  setImportMode('clash');
+                  setImportModalOpen(true);
+                  setTimeout(() => handleFetchImportURL(), 100);
+                }}
+            >
+              导入
             </Button>
+            <Button 
+                variant="primary" 
+                className="px-6 h-9 font-normal bg-[#007AFF] hover:bg-[#0062CC] text-white transition-colors rounded-md border-none"
+                onClick={() => {
+                  setImportUrl('');
+                  setImportModalOpen(true);
+                }}
+            >
+              新建
+            </Button>
+          </div>
+
+          {/* 订阅源卡片网格 */}
+          {sourceMetas.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-[var(--color-text-muted)] mt-10">
+               <div className="text-4xl mb-4 opacity-50">🕸️</div>
+               <p className="text-sm">暂无订阅，请粘贴链接导入或新建</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {sourceMetas.map((meta) => {
+                 const proxyCount = proxies.filter(p => p.sourceId === meta.sourceId).length;
+                 const timeAgoStr = meta.sourceLastRefreshAt ? getTimeAgo(meta.sourceLastRefreshAt) : '--';
+                 const domain = sourceHostLabel(meta.sourceUrl);
+                 return (
+                   <Card key={meta.sourceId} className="flex flex-col gap-3.5 p-4 hover:border-[var(--color-primary)] transition-colors cursor-pointer bg-white dark:bg-[#1C1C1E] border border-[var(--color-border)] shadow-sm rounded-xl">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-2 font-medium text-[var(--color-text-primary)]">
+                          <span className="text-[var(--color-text-muted)] font-black text-lg tracking-tighter opacity-70">::</span>
+                          <span className="truncate max-w-[170px] font-bold text-[15px]">{meta.sourceNamePrefix || domain}</span>
+                        </div>
+                        <button
+                           onClick={(e) => { e.stopPropagation(); void refreshSingleSource(meta.sourceId, false); }}
+                           className={`text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors outline-none focus:outline-none ${refreshingSourceIds.has(meta.sourceId) ? 'animate-spin' : ''}`}
+                        >
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                        </button>
+                      </div>
+                      <div className="flex justify-between items-center text-[13px] text-[var(--color-text-muted)]">
+                         <span className="truncate">{domain}</span>
+                         <span>{timeAgoStr}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[12px] text-[#A0A0A5] mb-1">
+                         <span>{proxyCount > 0 ? `${proxyCount} 个节点容量` : '-- / --'}</span>
+                         <span>-</span>
+                      </div>
+                      <div className="h-1 w-full bg-[#E5E5EA] dark:bg-[#3A3A3C] rounded-full overflow-hidden">
+                         {proxyCount > 0 && <div className="h-full bg-[#007AFF] w-[1%] max-w-full"></div>}
+                      </div>
+                   </Card>
+                 )
+              })}
+            </div>
           )}
+
+          {/* 全局扩展配置占位 */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-auto pt-8 pb-4">
+             <div className="flex items-center justify-between p-4 bg-white dark:bg-[#1C1C1E] border border-transparent shadow-sm rounded-xl hover:border-[var(--color-border)] cursor-pointer">
+                <span className="text-[15px] font-bold text-[var(--color-text-primary)]">全局扩展覆写配置</span>
+                <span className="text-[11px] px-2.5 py-0.5 rounded-full border border-[var(--color-primary)] text-[var(--color-primary)] font-medium">Merge</span>
+             </div>
+             <div className="flex items-center justify-between p-4 bg-white dark:bg-[#1C1C1E] border border-transparent shadow-sm rounded-xl hover:border-[var(--color-border)] cursor-pointer">
+                <span className="text-[15px] font-bold text-[var(--color-text-primary)]">全局扩展脚本</span>
+                <span className="text-[11px] px-2.5 py-0.5 rounded-full border border-[var(--color-primary)] text-[var(--color-primary)] font-medium">Script</span>
+             </div>
+          </div>
         </div>
-        <Table
-          columns={columns}
-          data={filteredList}
-          rowKey="proxyId"
-          loading={loading}
-          emptyText="暂无代理配置，点击上方按钮添加或导入"
-          sortColumn={sortColumn}
-          sortOrder={sortOrder}
-          onSort={({ column, order }) => {
-            setSortColumn(column)
-            setSortOrder(order)
-          }}
-        />
-      </Card>
+      )}
 
       <Modal open={importModalOpen} onClose={() => setImportModalOpen(false)} title="导入代理配置" width="600px"
         footer={
