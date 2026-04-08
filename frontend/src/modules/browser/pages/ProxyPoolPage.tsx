@@ -1292,12 +1292,12 @@ export function ProxyPoolPage() {
     {
       key: 'actions',
       title: '操作',
-      width: '320px',
+      width: '360px',
       render: (_, record) => {
         const isBuiltin = BUILTIN_PROXY_IDS.has(record.proxyId)
         const hasSource = !!record.sourceId && !!record.sourceUrl
         return (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {hasSource && (
               <Button
                 size="sm"

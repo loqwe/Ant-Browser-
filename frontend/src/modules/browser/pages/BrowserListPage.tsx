@@ -930,7 +930,7 @@ export function BrowserListPage() {
         const isBusy = isProfileBusy(record.profileId)
 
         return (
-          <div className="flex justify-end gap-1">
+          <div className="flex justify-end gap-1 flex-wrap">
             {record.running ? (
               <Button size="sm" variant="secondary" onClick={() => handleStop(record.profileId)} title="停止" loading={isStopping}>
                 {!isStopping && <Square className="w-3.5 h-3.5" />}
