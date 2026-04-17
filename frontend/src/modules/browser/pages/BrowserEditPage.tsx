@@ -149,7 +149,7 @@ export function BrowserEditPage() {
         </div>
       </div>
 
-      <Card title="基础信息" subtitle="实例与配置名称">
+      <Card title="基础信息" subtitle="实例与配置名称" className="overflow-visible">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <FormItem label="配置名称" required>
             <Input value={formData.profileName} onChange={e => handleChange('profileName', e.target.value)} placeholder="请输入配置名称" />
@@ -201,7 +201,7 @@ export function BrowserEditPage() {
         </div>
       </Card>
 
-      <Card title="代理配置" subtitle="选择代理池中的代理或手动输入">
+      <Card title="代理配置" subtitle="选择代理池中的代理或手动输入" className="overflow-visible">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <FormItem label="代理池选择">
             <div className="flex gap-2">
@@ -243,6 +243,7 @@ export function BrowserEditPage() {
       <Card title="指纹配置" subtitle="配置浏览器指纹参数">
         <FingerprintPanel
           value={formData.fingerprintArgs}
+          currentProxyId={formData.proxyId}
           onChange={args => handleChange('fingerprintArgs', args)}
         />
       </Card>

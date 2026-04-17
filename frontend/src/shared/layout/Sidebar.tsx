@@ -16,6 +16,7 @@ import {
   Cpu,
   Globe,
   Tag,
+  Puzzle,
   type LucideIcon
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -40,6 +41,7 @@ const iconMap: Record<string, LucideIcon> = {
   Bookmark,
   BookOpen,
   Tag,
+  Puzzle,
 }
 
 function getIcon(iconName: string): LucideIcon {

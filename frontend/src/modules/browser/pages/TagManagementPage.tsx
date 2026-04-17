@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Tag, Trash2, X } from 'lucide-react'
-import { Badge, Button, Card, toast } from '../../../shared/components'
+import { Badge, Button, Select, toast } from '../../../shared/components'
 import type { BrowserProfile } from '../types'
 import { batchRemoveProfileTags, batchSetProfileTags, fetchBrowserProfiles, renameBrowserTag } from '../api'
 
@@ -53,7 +53,7 @@ function TagPanel({ tags, selected, profilesByTag, totalCount, onSelect, onCreat
   }
 
   return (
-    <div className="w-52 shrink-0 border-r border-[var(--color-border)] flex flex-col bg-[var(--color-bg-surface)]">
+    <div className="w-52 shrink-0 min-h-0 border-r border-[var(--color-border)] flex flex-col bg-[var(--color-bg-surface)]">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
         <span className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">标签列表</span>
         <button
@@ -145,53 +145,73 @@ interface ActionBarProps {
 }
 
 function ActionBar({ selectedCount, allTags, onAddTags, onRemoveTags, onClear }: ActionBarProps) {
-  const [addInput, setAddInput] = useState('')
+  const [addTag, setAddTag] = useState('')
   const [removeTag, setRemoveTag] = useState('')
 
   if (selectedCount === 0) return null
 
+  const tagOptions = allTags.map(tag => ({ value: tag, label: tag }))
+
   const handleAdd = () => {
-    const tags = addInput.split(/[,，\s]+/).map(t => t.trim()).filter(Boolean)
-    if (!tags.length) return
-    onAddTags(tags)
-    setAddInput('')
+    if (!addTag) return
+    onAddTags([addTag])
+    setAddTag('')
   }
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5 bg-[var(--color-primary)]/5 border border-[var(--color-primary)]/20 rounded-lg text-sm">
-      <span className="text-[var(--color-primary)] font-medium shrink-0">已选 {selectedCount} 个</span>
-      <div className="flex items-center gap-1.5 flex-1 flex-wrap">
-        {/* 添加标签 */}
-        <div className="flex items-center gap-1">
-          <input
-            value={addInput}
-            onChange={e => setAddInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleAdd()}
-            placeholder="输入标签，逗号分隔"
-            className="px-2 py-1 text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-input)] text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] w-40"
-          />
-          <Button size="sm" onClick={handleAdd} disabled={!addInput.trim()}>
-            <Plus className="w-3.5 h-3.5" />添加标签
-          </Button>
-        </div>
-        {/* 移除标签 */}
-        {allTags.length > 0 && (
-          <div className="flex items-center gap-1">
-            <select
-              value={removeTag}
-              onChange={e => setRemoveTag(e.target.value)}
-              className="px-2 py-1 text-xs rounded border border-[var(--color-border)] bg-[var(--color-bg-input)] text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-primary)]"
-            >
-              <option value="">选择要移除的标签</option>
-              {allTags.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-            <Button size="sm" variant="secondary" onClick={() => { if (removeTag) { onRemoveTags([removeTag]); setRemoveTag('') } }} disabled={!removeTag}>
-              <Trash2 className="w-3.5 h-3.5" />移除
-            </Button>
-          </div>
-        )}
+    <div className="relative z-20 flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4 py-3 shadow-sm">
+      <div className="rounded-2xl border border-[var(--color-border-default)] bg-[var(--color-bg-secondary)] px-4 py-2 text-[15px] font-semibold text-[var(--color-text-primary)]">
+        已选 {selectedCount} 个
       </div>
-      <button onClick={onClear} className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]">
+
+      <Select
+        value={addTag}
+        onChange={e => setAddTag(e.target.value)}
+        options={[
+          { value: '', label: allTags.length > 0 ? '选择要添加的标签' : '请先在左侧创建标签' },
+          ...tagOptions,
+        ]}
+        className="h-11 w-56 rounded-2xl"
+      />
+
+      <Button size="md" onClick={handleAdd} disabled={!addTag} className="rounded-2xl px-5">
+        <Plus className="w-4 h-4" />添加标签
+      </Button>
+
+      {allTags.length > 0 && (
+        <>
+          <Select
+            value={removeTag}
+            onChange={e => setRemoveTag(e.target.value)}
+            options={[
+              { value: '', label: '选择要移除的标签' },
+              ...tagOptions,
+            ]}
+            className="h-11 w-56 rounded-2xl"
+          />
+
+          <Button
+            size="md"
+            variant="secondary"
+            onClick={() => {
+              if (removeTag) {
+                onRemoveTags([removeTag])
+                setRemoveTag('')
+              }
+            }}
+            disabled={!removeTag}
+            className="rounded-2xl px-5"
+          >
+            <Trash2 className="w-4 h-4" />移除
+          </Button>
+        </>
+      )}
+
+      <button
+        onClick={onClear}
+        className="ml-auto inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text-primary)]"
+        title="清空勾选"
+      >
         <X className="w-4 h-4" />
       </button>
     </div>
@@ -316,7 +336,7 @@ export function TagManagementPage() {
   }
 
   return (
-    <div className="flex h-full animate-fade-in">
+    <div className="flex h-[calc(100vh-96px)] min-h-0 overflow-hidden animate-fade-in">
       {/* 左侧标签面板 */}
       <TagPanel
         tags={allTags}
@@ -329,7 +349,7 @@ export function TagManagementPage() {
       />
 
       {/* 右侧内容区 */}
-      <div className="flex-1 flex flex-col overflow-hidden p-5 gap-4">
+      <div className="min-w-0 min-h-0 flex-1 flex flex-col p-5 gap-4 overflow-hidden">
         {/* 页头 */}
         <div className="flex items-center justify-between">
           <div>
@@ -354,8 +374,8 @@ export function TagManagementPage() {
         />
 
         {/* 实例表格 */}
-        <Card padding="none" className="flex-1 overflow-hidden">
-          <div className="overflow-auto h-full">
+        <div className="min-h-0 flex flex-1 flex-col overflow-hidden rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
+          <div className="min-h-0 flex-1 overflow-auto">
             <table className="min-w-full">
               <thead className="sticky top-0 z-10">
                 <tr>
@@ -408,7 +428,7 @@ export function TagManagementPage() {
               </tbody>
             </table>
           </div>
-        </Card>
+        </div>
 
         {saving && (
           <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center">

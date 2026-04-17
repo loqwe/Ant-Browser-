@@ -74,6 +74,50 @@ export function BrowserExportCookies(arg1) {
   return window['go']['main']['App']['BrowserExportCookies'](arg1);
 }
 
+export function BrowserExtensionDelete(arg1) {
+  return window['go']['main']['App']['BrowserExtensionDelete'](arg1);
+}
+
+export function BrowserExtensionImportCRX(arg1) {
+  return window['go']['main']['App']['BrowserExtensionImportCRX'](arg1);
+}
+
+export function BrowserExtensionImportChromeStore(arg1) {
+  return window['go']['main']['App']['BrowserExtensionImportChromeStore'](arg1);
+}
+
+export function BrowserExtensionImportDir(arg1) {
+  return window['go']['main']['App']['BrowserExtensionImportDir'](arg1);
+}
+
+export function BrowserExtensionImportURL(arg1) {
+  return window['go']['main']['App']['BrowserExtensionImportURL'](arg1);
+}
+
+export function BrowserExtensionList() {
+  return window['go']['main']['App']['BrowserExtensionList']();
+}
+
+export function BrowserExtensionRefresh(arg1) {
+  return window['go']['main']['App']['BrowserExtensionRefresh'](arg1);
+}
+
+export function BrowserExtensionSelectCRX() {
+  return window['go']['main']['App']['BrowserExtensionSelectCRX']();
+}
+
+export function BrowserExtensionSelectDir() {
+  return window['go']['main']['App']['BrowserExtensionSelectDir']();
+}
+
+export function BrowserExtensionSetDefaultScope(arg1, arg2) {
+  return window['go']['main']['App']['BrowserExtensionSetDefaultScope'](arg1, arg2);
+}
+
+export function BrowserFingerprintSuggestByProxy(arg1, arg2) {
+  return window['go']['main']['App']['BrowserFingerprintSuggestByProxy'](arg1, arg2);
+}
+
 export function BrowserGetAllTags() {
   return window['go']['main']['App']['BrowserGetAllTags']();
 }
@@ -132,6 +176,14 @@ export function BrowserProfileCreate(arg1) {
 
 export function BrowserProfileDelete(arg1) {
   return window['go']['main']['App']['BrowserProfileDelete'](arg1);
+}
+
+export function BrowserProfileExtensionList(arg1) {
+  return window['go']['main']['App']['BrowserProfileExtensionList'](arg1);
+}
+
+export function BrowserProfileExtensionSave(arg1, arg2) {
+  return window['go']['main']['App']['BrowserProfileExtensionSave'](arg1, arg2);
 }
 
 export function BrowserProfileGetCode(arg1) {
@@ -212,6 +264,26 @@ export function BrowserSnapshotList(arg1) {
 
 export function BrowserSnapshotRestore(arg1, arg2) {
   return window['go']['main']['App']['BrowserSnapshotRestore'](arg1, arg2);
+}
+
+export function BrowserSubscriptionDelete(arg1) {
+  return window['go']['main']['App']['BrowserSubscriptionDelete'](arg1);
+}
+
+export function BrowserSubscriptionList() {
+  return window['go']['main']['App']['BrowserSubscriptionList']();
+}
+
+export function BrowserSubscriptionNodeList(arg1) {
+  return window['go']['main']['App']['BrowserSubscriptionNodeList'](arg1);
+}
+
+export function BrowserSubscriptionRefresh(arg1) {
+  return window['go']['main']['App']['BrowserSubscriptionRefresh'](arg1);
+}
+
+export function BrowserSubscriptionSave(arg1) {
+  return window['go']['main']['App']['BrowserSubscriptionSave'](arg1);
 }
 
 export function ClearAppLogs() {

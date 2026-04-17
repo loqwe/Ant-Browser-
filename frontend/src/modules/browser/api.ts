@@ -1,4 +1,4 @@
-import type { BrowserProfile, BrowserProfileInput, BrowserTab, BrowserSettings, BrowserCore, BrowserCoreInput, BrowserCoreValidateResult, BrowserProxy, BrowserCoreExtended, CookieInfo, SnapshotInfo, BrowserBookmark, BrowserGroup, BrowserGroupInput, BrowserGroupWithCount, ProxyIPHealthResult } from './types'
+import type { BrowserProfile, BrowserProfileInput, BrowserTab, BrowserSettings, BrowserCore, BrowserCoreInput, BrowserCoreValidateResult, BrowserProxy, BrowserCoreExtended, BrowserSubscriptionSource, BrowserSubscriptionNode, BrowserFingerprintSuggestion, BrowserExtension, BrowserProfileExtensionBinding, CookieInfo, SnapshotInfo, BrowserBookmark, BrowserGroup, BrowserGroupInput, BrowserGroupWithCount, ProxyIPHealthResult } from './types'
 
 const getBindings = async () => {
   try {
@@ -34,6 +34,10 @@ let mockProfiles: BrowserProfile[] = [
 let mockCores: BrowserCore[] = []
 
 let mockProxies: BrowserProxy[] = []
+let mockSubscriptions: BrowserSubscriptionSource[] = []
+
+let mockExtensions: BrowserExtension[] = []
+let mockProfileExtensions: Record<string, BrowserProfileExtensionBinding[]> = {}
 
 // ============================================================================
 // Profile API
@@ -798,4 +802,199 @@ export async function moveInstancesToGroup(profileIds: string[], groupId: string
     return true
   }
   return false
+}
+
+
+// ============================================================================
+// Extension API
+// ============================================================================
+
+export async function fetchBrowserExtensions(): Promise<BrowserExtension[]> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserExtensionList) {
+    return (await bindings.BrowserExtensionList()) || []
+  }
+  return mockExtensions
+}
+
+export async function importBrowserExtensionDir(dir = ''): Promise<BrowserExtension | null> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserExtensionImportDir) {
+    return (await bindings.BrowserExtensionImportDir(dir)) || null
+  }
+  if (!dir.trim()) return null
+  const item: BrowserExtension = {
+    extensionId: `ext-${Date.now()}`,
+    name: dir.split(/[\\/]/).pop() || '未命名扩展',
+    sourceType: 'unpacked',
+    sourcePath: dir,
+    unpackedPath: dir,
+    version: '0.0.0',
+    description: '',
+    permissions: [],
+    hostPermissions: [],
+    optionsPage: '',
+    iconPath: '',
+    enabledByDefault: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  mockExtensions = [item, ...mockExtensions]
+  return item
+}
+
+export async function importBrowserExtensionPackage(path = ''): Promise<BrowserExtension | null> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserExtensionImportCRX) {
+    return (await bindings.BrowserExtensionImportCRX(path)) || null
+  }
+  return null
+}
+
+export async function importBrowserExtensionCRX(path = ''): Promise<BrowserExtension | null> {
+  return importBrowserExtensionPackage(path)
+}
+
+export async function pickBrowserExtensionDir(): Promise<string> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserExtensionSelectDir) {
+    return (await bindings.BrowserExtensionSelectDir()) || ''
+  }
+  return ''
+}
+
+export async function pickBrowserExtensionPackage(): Promise<string> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserExtensionSelectCRX) {
+    return (await bindings.BrowserExtensionSelectCRX()) || ''
+  }
+  return ''
+}
+
+export async function pickBrowserExtensionCRX(): Promise<string> {
+  return pickBrowserExtensionPackage()
+}
+
+export async function importBrowserExtensionFromURL(url: string): Promise<BrowserExtension | null> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserExtensionImportURL) {
+    return (await bindings.BrowserExtensionImportURL(url)) || null
+  }
+  return null
+}
+
+export async function importBrowserExtensionFromChromeStore(extensionId: string): Promise<BrowserExtension | null> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserExtensionImportChromeStore) {
+    return (await bindings.BrowserExtensionImportChromeStore(extensionId)) || null
+  }
+  return null
+}
+
+export async function deleteBrowserExtension(extensionId: string): Promise<boolean> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserExtensionDelete) {
+    await bindings.BrowserExtensionDelete(extensionId)
+    return true
+  }
+  mockExtensions = mockExtensions.filter(item => item.extensionId !== extensionId)
+  Object.keys(mockProfileExtensions).forEach(profileId => {
+    mockProfileExtensions[profileId] = (mockProfileExtensions[profileId] || []).filter(item => item.extensionId !== extensionId)
+  })
+  return true
+}
+
+export async function setBrowserExtensionDefaultScope(extensionId: string, enabled: boolean): Promise<BrowserExtension | null> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserExtensionSetDefaultScope) {
+    return (await bindings.BrowserExtensionSetDefaultScope(extensionId, enabled)) || null
+  }
+  const item = mockExtensions.find(entry => entry.extensionId === extensionId) || null
+  if (!item) return null
+  item.enabledByDefault = enabled
+  item.updatedAt = new Date().toISOString()
+  return { ...item }
+}
+
+export async function refreshBrowserExtension(extensionId: string): Promise<BrowserExtension | null> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserExtensionRefresh) {
+    return (await bindings.BrowserExtensionRefresh(extensionId)) || null
+  }
+  return mockExtensions.find(entry => entry.extensionId === extensionId) || null
+}
+
+export async function fetchBrowserProfileExtensions(profileId: string): Promise<BrowserProfileExtensionBinding[]> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserProfileExtensionList) {
+    return (await bindings.BrowserProfileExtensionList(profileId)) || []
+  }
+  return mockProfileExtensions[profileId] || []
+}
+
+export async function saveBrowserProfileExtensions(profileId: string, items: BrowserProfileExtensionBinding[]): Promise<boolean> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserProfileExtensionSave) {
+    await bindings.BrowserProfileExtensionSave(profileId, items)
+    return true
+  }
+  mockProfileExtensions[profileId] = items
+  return true
+}
+
+
+
+export async function fetchBrowserSubscriptions(): Promise<BrowserSubscriptionSource[]> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserSubscriptionList) return (await bindings.BrowserSubscriptionList()) || []
+  const goApp = (window as any).go?.main?.App
+  if (goApp?.BrowserSubscriptionList) return (await goApp.BrowserSubscriptionList()) || []
+  return mockSubscriptions
+}
+
+export async function saveBrowserSubscription(source: BrowserSubscriptionSource): Promise<BrowserSubscriptionSource> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserSubscriptionSave) return await bindings.BrowserSubscriptionSave(source)
+  const goApp = (window as any).go?.main?.App
+  if (goApp?.BrowserSubscriptionSave) return await goApp.BrowserSubscriptionSave(source)
+  const next = { ...source, sourceId: source.sourceId || `src-${Date.now()}` }
+  mockSubscriptions = [next, ...mockSubscriptions.filter(item => item.sourceId !== next.sourceId)]
+  return next
+}
+
+export async function deleteBrowserSubscription(sourceId: string): Promise<void> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserSubscriptionDelete) return await bindings.BrowserSubscriptionDelete(sourceId)
+  const goApp = (window as any).go?.main?.App
+  if (goApp?.BrowserSubscriptionDelete) return await goApp.BrowserSubscriptionDelete(sourceId)
+  mockSubscriptions = mockSubscriptions.filter(item => item.sourceId !== sourceId)
+}
+
+export async function refreshBrowserSubscription(sourceId: string): Promise<void> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserSubscriptionRefresh) return await bindings.BrowserSubscriptionRefresh(sourceId)
+  const goApp = (window as any).go?.main?.App
+  if (goApp?.BrowserSubscriptionRefresh) return await goApp.BrowserSubscriptionRefresh(sourceId)
+}
+
+export async function fetchBrowserSubscriptionNodes(sourceId: string): Promise<BrowserSubscriptionNode[]> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserSubscriptionNodeList) return (await bindings.BrowserSubscriptionNodeList(sourceId)) || []
+  const goApp = (window as any).go?.main?.App
+  if (goApp?.BrowserSubscriptionNodeList) return (await goApp.BrowserSubscriptionNodeList(sourceId)) || []
+  return []
+}
+
+export async function saveBrowserSubscriptionSelectedNodes(source: BrowserSubscriptionSource, nodeKeys: string[], sync = true): Promise<BrowserSubscriptionSource> {
+  const saved = await saveBrowserSubscription({ ...source, selectedNodeKeysJson: JSON.stringify(nodeKeys), importMode: 'selected' })
+  if (sync) await refreshBrowserSubscription(saved.sourceId)
+  return saved
+}
+
+export async function browserFingerprintSuggestByProxy(proxyId: string, seed: string): Promise<BrowserFingerprintSuggestion> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserFingerprintSuggestByProxy) return await bindings.BrowserFingerprintSuggestByProxy(proxyId, seed)
+  const goApp = (window as any).go?.main?.App
+  if (goApp?.BrowserFingerprintSuggestByProxy) return await goApp.BrowserFingerprintSuggestByProxy(proxyId, seed)
+  throw new Error('??? IP ???????')
 }

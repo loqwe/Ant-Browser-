@@ -29,6 +29,7 @@ func TestUnifiedDelayTestReconnectsWhenWarmupConnectionCloses(t *testing.T) {
 	}
 }
 
+
 func TestUnifiedDelayTestFallsBackToFreshGetAfterHeadTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead {
@@ -51,13 +52,18 @@ func TestUnifiedDelayTestFallsBackToFreshGetAfterHeadTimeout(t *testing.T) {
 	}
 }
 
-func TestUnifiedDelayTestFallsBackToFreshGetAfterHeadTimeout(t *testing.T) {
+
+func TestUnifiedDelayTestWithFallbackUsesProxyDialWhenHTTPProbeReturnsEOF(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodHead {
-			time.Sleep(120 * time.Millisecond)
-			return
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatalf("response writer does not support hijack")
 		}
-		w.WriteHeader(http.StatusNoContent)
+		conn, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Fatalf("hijack failed: %v", err)
+		}
+		_ = conn.Close()
 	}))
 	defer server.Close()
 
@@ -67,8 +73,8 @@ func TestUnifiedDelayTestFallsBackToFreshGetAfterHeadTimeout(t *testing.T) {
 	}
 	defer func() { _ = proxyInstance.Close() }()
 
-	result := unifiedDelayTest("direct-node", proxyInstance, server.URL, 80*time.Millisecond)
+	result := unifiedDelayTestWithFallback("direct-node", proxyInstance, []string{server.URL}, 2*time.Second)
 	if !result.Ok {
-		t.Fatalf("unifiedDelayTest should retry GET with fresh context: %+v", result)
+		t.Fatalf("speed test should fall back to proxy dial after HTTP EOF: %+v", result)
 	}
 }

@@ -90,6 +90,69 @@ type CoreExtendedInfo struct {
 	InstanceCount int    `json:"instanceCount"`
 }
 
+// Extension ?????
+type Extension struct {
+	ExtensionId      string   `json:"extensionId"`
+	Name             string   `json:"name"`
+	SourceType       string   `json:"sourceType"`
+	SourcePath       string   `json:"sourcePath"`
+	UnpackedPath     string   `json:"unpackedPath"`
+	Version          string   `json:"version"`
+	Description      string   `json:"description"`
+	Permissions      []string `json:"permissions"`
+	HostPermissions  []string `json:"hostPermissions"`
+	OptionsPage      string   `json:"optionsPage"`
+	IconPath         string   `json:"iconPath"`
+	EnabledByDefault bool     `json:"enabledByDefault"`
+	CreatedAt        string   `json:"createdAt"`
+	UpdatedAt        string   `json:"updatedAt"`
+}
+
+// ProfileExtensionBinding ??????
+type ProfileExtensionBinding struct {
+	BindingId   string `json:"bindingId"`
+	ProfileId   string `json:"profileId"`
+	ExtensionId string `json:"extensionId"`
+	Enabled     bool   `json:"enabled"`
+	SortOrder   int    `json:"sortOrder"`
+	CreatedAt   string `json:"createdAt"`
+	UpdatedAt   string `json:"updatedAt"`
+}
+
+// SubscriptionSource ???
+type SubscriptionSource struct {
+	SourceID                string `json:"sourceId"`
+	Name                    string `json:"name"`
+	URL                     string `json:"url"`
+	Enabled                 bool   `json:"enabled"`
+	RefreshIntervalMinutes  int    `json:"refreshIntervalMinutes"`
+	LastRefreshAt           string `json:"lastRefreshAt"`
+	LastRefreshStatus       string `json:"lastRefreshStatus"`
+	LastError               string `json:"lastError"`
+	TrafficUsed             string `json:"trafficUsed"`
+	TrafficTotal            string `json:"trafficTotal"`
+	ExpireAt                string `json:"expireAt"`
+	RawContentHash          string `json:"rawContentHash,omitempty"`
+	ProxyGroupsJSON         string `json:"proxyGroupsJson,omitempty"`
+	SelectedProxyGroupsJSON string `json:"selectedProxyGroupsJson,omitempty"`
+	ImportMode              string `json:"importMode,omitempty"`
+	SelectedNodeKeysJSON    string `json:"selectedNodeKeysJson,omitempty"`
+	ImportStatsJSON         string `json:"importStatsJson,omitempty"`
+}
+
+type SubscriptionNode struct {
+	NodeKey       string `json:"nodeKey"`
+	SourceID      string `json:"sourceId"`
+	NodeName      string `json:"nodeName"`
+	Protocol      string `json:"protocol"`
+	Server        string `json:"server"`
+	Port          int    `json:"port"`
+	DisplayGroup  string `json:"displayGroup"`
+	ChainMode     string `json:"chainMode"`
+	UpstreamAlias string `json:"upstreamAlias"`
+	NodeJSON      string `json:"nodeJson"`
+}
+
 // Group 实例分组
 type Group struct {
 	GroupId   string `json:"groupId"`
@@ -136,11 +199,15 @@ type Manager struct {
 	CodeProvider     CodeProvider
 
 	// DAO 层（注入后使用 SQLite 存储，未注入时降级到 config.yaml）
-	ProfileDAO  ProfileDAO
-	ProxyDAO    ProxyDAO
-	CoreDAO     CoreDAO
-	BookmarkDAO BookmarkDAO
-	GroupDAO    GroupDAO
+	ProfileDAO          ProfileDAO
+	ProxyDAO            ProxyDAO
+	SubscriptionDAO     SubscriptionDAO
+	SubscriptionNodeDAO SubscriptionNodeDAO
+	CoreDAO             CoreDAO
+	BookmarkDAO         BookmarkDAO
+	GroupDAO            GroupDAO
+	ExtensionDAO        ExtensionDAO
+	ProfileExtensionDAO ProfileExtensionDAO
 }
 
 // XrayBridge Xray 桥接进程

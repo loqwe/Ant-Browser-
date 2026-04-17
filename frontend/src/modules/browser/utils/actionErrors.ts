@@ -38,3 +38,10 @@ export function resolveActionFeedback(error: unknown, fallback: string): { messa
 export function resolveActionErrorMessage(error: unknown, fallback: string): string {
   return resolveActionFeedback(error, fallback).message
 }
+
+
+export function resolveActionErrorSummary(error: unknown, fallback: string): string {
+  const message = resolveActionErrorMessage(error, fallback).trim()
+  const firstLine = message.split(/\r?\n/).map(item => item.trim()).find(Boolean)
+  return firstLine || fallback
+}

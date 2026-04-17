@@ -99,7 +99,7 @@ func pickClashNode(payload interface{}) map[string]interface{} {
 }
 
 func buildStandardProxyFromClash(node map[string]interface{}, scheme string) string {
-	host := getMapString(node, "server")
+	host := resolveBridgeServerHost(getMapString(node, "server"))
 	port := getMapInt(node, "port")
 	username := getMapString(node, "username")
 	password := getMapString(node, "password")
@@ -115,7 +115,7 @@ func buildStandardProxyFromClash(node map[string]interface{}, scheme string) str
 }
 
 func buildOutboundFromClashVless(node map[string]interface{}) (map[string]interface{}, string, error) {
-	host := getMapString(node, "server")
+	host := resolveBridgeServerHost(getMapString(node, "server"))
 	port := getMapInt(node, "port")
 	id := getMapString(node, "uuid")
 	flow := getMapString(node, "flow")
@@ -178,6 +178,9 @@ func buildOutboundFromClashVless(node map[string]interface{}) (map[string]interf
 		if sni != "" {
 			tlsSettings["serverName"] = sni
 		}
+		if fingerprint := getMapString(node, "client-fingerprint"); fingerprint != "" {
+			tlsSettings["fingerprint"] = fingerprint
+		}
 		tlsSettings["allowInsecure"] = getMapBool(node, "skip-cert-verify")
 		stream["security"] = "tls"
 		stream["tlsSettings"] = tlsSettings
@@ -221,7 +224,7 @@ func buildOutboundFromClashVless(node map[string]interface{}) (map[string]interf
 }
 
 func buildOutboundFromClashVmess(node map[string]interface{}) (map[string]interface{}, string, error) {
-	host := getMapString(node, "server")
+	host := resolveBridgeServerHost(getMapString(node, "server"))
 	port := getMapInt(node, "port")
 	id := getMapString(node, "uuid")
 	cipher := getMapString(node, "cipher")
@@ -302,7 +305,7 @@ func buildOutboundFromClashVmess(node map[string]interface{}) (map[string]interf
 }
 
 func buildOutboundFromClashTrojan(node map[string]interface{}) (map[string]interface{}, string, error) {
-	host := getMapString(node, "server")
+	host := resolveBridgeServerHost(getMapString(node, "server"))
 	port := getMapInt(node, "port")
 	password := getMapString(node, "password")
 	sni := getMapString(node, "sni")
@@ -321,12 +324,15 @@ func buildOutboundFromClashTrojan(node map[string]interface{}) (map[string]inter
 			"password": password,
 		},
 	}
+	tlsSettings := map[string]interface{}{
+		"serverName":    sni,
+		"allowInsecure": skipVerify,
+		"fingerprint":   firstNonEmpty(getMapString(node, "client-fingerprint"), "chrome"),
+		"alpn":          firstNonEmptyStringSlice(toStringSlice(node["alpn"]), []string{"h2", "http/1.1"}),
+	}
 	stream := map[string]interface{}{
-		"security": "tls",
-		"tlsSettings": map[string]interface{}{
-			"serverName":    sni,
-			"allowInsecure": skipVerify,
-		},
+		"security":    "tls",
+		"tlsSettings": tlsSettings,
 	}
 	if network == "ws" {
 		stream["network"] = "ws"
@@ -458,7 +464,7 @@ func buildOutboundVless(node string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vless 解析失败: %v", err)
 	}
-	host := u.Hostname()
+	host := resolveBridgeServerHost(u.Hostname())
 	portStr := u.Port()
 	p, _ := strconv.Atoi(portStr)
 	id := u.User.Username()
@@ -530,7 +536,7 @@ func buildOutboundTrojan(node string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("trojan 解析失败: %v", err)
 	}
-	host := u.Hostname()
+	host := resolveBridgeServerHost(u.Hostname())
 	portStr := u.Port()
 	p, _ := strconv.Atoi(portStr)
 	password := u.User.Username()
@@ -551,12 +557,14 @@ func buildOutboundTrojan(node string) (map[string]interface{}, error) {
 			"password": password,
 		},
 	}
+	tlsSettings := map[string]interface{}{
+		"serverName":    sni,
+		"allowInsecure": skipVerify,
+		"alpn":          []string{"h2", "http/1.1"},
+	}
 	stream := map[string]interface{}{
-		"security": "tls",
-		"tlsSettings": map[string]interface{}{
-			"serverName":    sni,
-			"allowInsecure": skipVerify,
-		},
+		"security":    "tls",
+		"tlsSettings": tlsSettings,
 	}
 	if network == "ws" {
 		stream["network"] = "ws"
@@ -575,7 +583,7 @@ func buildOutboundTrojan(node string) (map[string]interface{}, error) {
 
 // buildOutboundFromClashSS 从 Clash YAML 格式解析 Shadowsocks outbound
 func buildOutboundFromClashSS(node map[string]interface{}) (map[string]interface{}, string, error) {
-	host := getMapString(node, "server")
+	host := resolveBridgeServerHost(getMapString(node, "server"))
 	port := getMapInt(node, "port")
 	password := getMapString(node, "password")
 	cipher := getMapString(node, "cipher")
@@ -663,7 +671,7 @@ func buildOutboundSS(node string) (map[string]interface{}, error) {
 		}
 		hostPort := strings.Split(hostPart, ":")
 		if len(hostPort) == 2 {
-			host = hostPort[0]
+			host = resolveBridgeServerHost(hostPort[0])
 			port, _ = strconv.Atoi(hostPort[1])
 		}
 	}
@@ -682,4 +690,20 @@ func buildOutboundSS(node string) (map[string]interface{}, error) {
 			"password": password,
 		},
 	}, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyStringSlice(values []string, fallback []string) []string {
+	if len(values) > 0 {
+		return values
+	}
+	return fallback
 }

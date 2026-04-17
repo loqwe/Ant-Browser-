@@ -20,7 +20,7 @@ import (
 // ─── Clash 标准测速 URL ───
 // 使用 HTTP 与 Clash 客户端保持一致
 
-const defaultTestURL = "http://www.gstatic.com/generate_204"
+var defaultTestURLs = []string{"http://www.gstatic.com/generate_204", "http://cp.cloudflare.com/generate_204", "https://www.gstatic.com/generate_204"}
 
 // SpeedTestConfig 测速参数
 type SpeedTestConfig struct {
@@ -44,16 +44,14 @@ func SpeedTest(
 	proxies []config.BrowserProxy,
 	xrayMgr *XrayManager,
 	singboxMgr *SingBoxManager,
+	mihomoMgr *MihomoManager,
 	cfg *SpeedTestConfig,
 ) TestResult {
 	log := logger.New("SpeedTest")
-
 	if cfg == nil {
-		c := DefaultSpeedTestConfig
-		cfg = &c
+		copyCfg := DefaultSpeedTestConfig
+		cfg = &copyCfg
 	}
-
-	// 查找代理配置
 	src := ""
 	for _, item := range proxies {
 		if strings.EqualFold(item.ProxyId, proxyId) {
@@ -61,42 +59,104 @@ func SpeedTest(
 			break
 		}
 	}
-	if src == "" {
-		return TestResult{ProxyId: proxyId, Ok: false, Error: "代理配置为空"}
+	src, chain, chained, err := ResolveRuntimeChain(src, proxies, proxyId)
+	if err != nil {
+		return TestResult{ProxyId: proxyId, Ok: false, Error: err.Error()}
 	}
-
 	if strings.ToLower(src) == "direct://" {
 		return TestResult{ProxyId: proxyId, Ok: true, LatencyMs: 0}
 	}
-
-	testURL := defaultTestURL
+	testURLs := append([]string{}, defaultTestURLs...)
 	if len(cfg.URLs) > 0 {
-		testURL = cfg.URLs[0]
+		testURLs = append([]string{}, cfg.URLs...)
 	}
-
-	// 将代理配置转换为 mihomo mapping
+	if len(testURLs) == 0 {
+		testURLs = []string{"http://www.gstatic.com/generate_204"}
+	}
+	if chained {
+		if SupportsMihomoChain(chain) {
+			if mihomoMgr != nil {
+				socksURL, bridgeErr := mihomoMgr.EnsureChainBridge(chain)
+				if bridgeErr != nil {
+					return TestResult{ProxyId: proxyId, Ok: false, Error: bridgeErr.Error()}
+				}
+				mapping, mapErr := proxyConfigToMapping(socksURL)
+				if mapErr != nil {
+					return TestResult{ProxyId: proxyId, Ok: false, Error: mapErr.Error()}
+				}
+				proxyInstance, parseErr := adapter.ParseProxy(mapping)
+				if parseErr != nil {
+					return TestResult{ProxyId: proxyId, Ok: false, Error: parseErr.Error()}
+				}
+				return unifiedDelayTestWithFallback(proxyId, proxyInstance, testURLs, cfg.Timeout)
+			}
+			proxyInstance, buildErr := buildMihomoChainProxy(chain)
+			if buildErr != nil {
+				return TestResult{ProxyId: proxyId, Ok: false, Error: buildErr.Error()}
+			}
+			return unifiedDelayTestWithFallback(proxyId, proxyInstance, testURLs, cfg.Timeout)
+		}
+		var socksURL string
+		if ChainUsesSingBox(chain) {
+			if singboxMgr == nil {
+				return TestResult{ProxyId: proxyId, Ok: false, Error: "sing-box manager unavailable"}
+			}
+			socksURL, err = singboxMgr.EnsureChainBridge(chain)
+		} else {
+			if xrayMgr == nil {
+				return TestResult{ProxyId: proxyId, Ok: false, Error: "xray manager unavailable"}
+			}
+			socksURL, err = xrayMgr.EnsureChainBridge(chain)
+		}
+		if err != nil {
+			return TestResult{ProxyId: proxyId, Ok: false, Error: err.Error()}
+		}
+		mapping, mapErr := proxyConfigToMapping(socksURL)
+		if mapErr != nil {
+			return TestResult{ProxyId: proxyId, Ok: false, Error: mapErr.Error()}
+		}
+		proxyInstance, parseErr := adapter.ParseProxy(mapping)
+		if parseErr != nil {
+			return TestResult{ProxyId: proxyId, Ok: false, Error: parseErr.Error()}
+		}
+		return unifiedDelayTestWithFallback(proxyId, proxyInstance, testURLs, cfg.Timeout)
+	}
+	if src == "" {
+		return TestResult{ProxyId: proxyId, Ok: false, Error: "未找到代理节点"}
+	}
+	if SupportsMihomoBridge(src) {
+		if mihomoMgr != nil {
+			socksURL, bridgeErr := mihomoMgr.EnsureBridge(src)
+			if bridgeErr != nil {
+				return TestResult{ProxyId: proxyId, Ok: false, Error: bridgeErr.Error()}
+			}
+			mapping, mapErr := proxyConfigToMapping(socksURL)
+			if mapErr != nil {
+				return TestResult{ProxyId: proxyId, Ok: false, Error: mapErr.Error()}
+			}
+			proxyInstance, parseErr := adapter.ParseProxy(mapping)
+			if parseErr != nil {
+				return TestResult{ProxyId: proxyId, Ok: false, Error: parseErr.Error()}
+			}
+			return unifiedDelayTestWithFallback(proxyId, proxyInstance, testURLs, cfg.Timeout)
+		}
+		proxyInstance, buildErr := buildMihomoProxy(src, nil)
+		if buildErr != nil {
+			return TestResult{ProxyId: proxyId, Ok: false, Error: buildErr.Error()}
+		}
+		return unifiedDelayTestWithFallback(proxyId, proxyInstance, testURLs, cfg.Timeout)
+	}
 	mapping, err := proxyConfigToMapping(src)
 	if err != nil {
-		log.Warn("代理配置解析失败，降级到 TCP ping",
-			logger.F("proxy_id", proxyId),
-			logger.F("error", err.Error()),
-		)
+		log.Warn("代理配置解析失败，降级到 TCP ping", logger.F("proxy_id", proxyId), logger.F("error", err.Error()))
 		return tcpPingFallback(proxyId, src, cfg.TCPTimeout, log)
 	}
-
-	// 使用 mihomo adapter.ParseProxy 创建代理实例
 	proxyInstance, err := adapter.ParseProxy(mapping)
 	if err != nil {
-		log.Warn("mihomo 代理创建失败，降级到 TCP ping",
-			logger.F("proxy_id", proxyId),
-			logger.F("error", err.Error()),
-			logger.F("type", mapping["type"]),
-		)
+		log.Warn("mihomo 代理创建失败，降级到 TCP ping", logger.F("proxy_id", proxyId), logger.F("error", err.Error()), logger.F("type", mapping["type"]))
 		return tcpPingFallback(proxyId, src, cfg.TCPTimeout, log)
 	}
-
-	// unified-delay 测速：分离连接建立和 HTTP 往返计时
-	return unifiedDelayTest(proxyId, proxyInstance, testURL, cfg.Timeout)
+	return unifiedDelayTestWithFallback(proxyId, proxyInstance, testURLs, cfg.Timeout)
 }
 
 // unifiedDelayTest 模拟 Clash unified-delay 模式：
@@ -104,26 +164,75 @@ func SpeedTest(
 // 2. 发送第一次 HTTP 请求预热连接（不计入延迟）
 // 3. 在已建立的连接上发送第二次 HTTP 请求，只计这次的 RTT
 // 这样测出的延迟 = 纯 HTTP 往返时间，和 Clash unified-delay: true 一致。
-func unifiedDelayTest(proxyId string, px C.Proxy, testURL string, timeout time.Duration) TestResult {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+func unifiedDelayTestWithFallback(proxyId string, px C.Proxy, testURLs []string, timeout time.Duration) TestResult {
+	var last TestResult
+	for _, testURL := range testURLs {
+		testURL = strings.TrimSpace(testURL)
+		if testURL == "" {
+			continue
+		}
+		last = unifiedDelayTest(proxyId, px, testURL, timeout)
+		if last.Ok {
+			return last
+		}
+	}
+	if last.ProxyId == "" {
+		return TestResult{ProxyId: proxyId, Ok: false, Error: "无可用测试 URL"}
+	}
+	dialResult := proxyDialFallback(proxyId, px, testURLs, timeout)
+	if dialResult.Ok {
+		return dialResult
+	}
+	if strings.TrimSpace(dialResult.Error) != "" {
+		last.Error = "HTTP 探测失败： " + strings.TrimSpace(last.Error) + "；代理拨号失败： " + strings.TrimSpace(dialResult.Error)
+	}
+	return last
+}
 
+func proxyDialFallback(proxyId string, px C.Proxy, testURLs []string, timeout time.Duration) TestResult {
+	var last TestResult
+	for _, testURL := range testURLs {
+		testURL = strings.TrimSpace(testURL)
+		if testURL == "" {
+			continue
+		}
+		addr, err := urlToMeta(testURL)
+		if err != nil {
+			last = TestResult{ProxyId: proxyId, Ok: false, Error: fmt.Sprintf("URL 解析失败： %v", err)}
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		start := time.Now()
+		conn, err := px.DialContext(ctx, &addr)
+		latency := time.Since(start).Milliseconds()
+		cancel()
+		if err != nil {
+			last = TestResult{ProxyId: proxyId, Ok: false, LatencyMs: latency, Error: fmt.Sprintf("代理拨号失败： %v", err)}
+			continue
+		}
+		_ = conn.Close()
+		return TestResult{ProxyId: proxyId, Ok: true, LatencyMs: latency}
+	}
+	if last.ProxyId == "" {
+		return TestResult{ProxyId: proxyId, Ok: false, Error: "无可用测试 URL"}
+	}
+	return last
+}
+
+func unifiedDelayTest(proxyId string, px C.Proxy, testURL string, timeout time.Duration) TestResult {
 	// 解析目标地址
 	addr, err := urlToMeta(testURL)
 	if err != nil {
 		return TestResult{ProxyId: proxyId, Ok: false, Error: fmt.Sprintf("URL 解析失败: %v", err)}
 	}
 
-	// 步骤 1：通过代理 DialContext 建立连接（预热）
-	conn, err := px.DialContext(ctx, &addr)
-	if err != nil {
-		return TestResult{ProxyId: proxyId, Ok: false, Error: fmt.Sprintf("代理连接失败: %v", err)}
-	}
-	defer conn.Close()
-
-	// 构造复用此连接的 HTTP client
+	// 步骤 1：构造通过代理拨号的 HTTP client
 	transport := &http.Transport{
-		DialContext: func(context.Context, string, string) (net.Conn, error) {
+		DialContext: func(reqCtx context.Context, network, address string) (net.Conn, error) {
+			conn, dialErr := px.DialContext(reqCtx, &addr)
+			if dialErr != nil {
+				return nil, fmt.Errorf("代理连接失败: %w", dialErr)
+			}
 			return conn, nil
 		},
 		DisableKeepAlives: false,
@@ -138,8 +247,22 @@ func unifiedDelayTest(proxyId string, px C.Proxy, testURL string, timeout time.D
 	defer client.CloseIdleConnections()
 
 	// 步骤 2：第一次请求预热（不计时）
-	req1, _ := http.NewRequestWithContext(ctx, http.MethodHead, testURL, nil)
+	newRequest := func(method string) (*http.Request, context.CancelFunc) {
+		reqCtx, reqCancel := context.WithTimeout(context.Background(), timeout)
+		req, _ := http.NewRequestWithContext(reqCtx, method, testURL, nil)
+		return req, reqCancel
+	}
+
+	method := http.MethodHead
+	req1, cancel1 := newRequest(method)
 	resp1, err := client.Do(req1)
+	cancel1()
+	if err != nil {
+		method = http.MethodGet
+		req1, cancel1 = newRequest(method)
+		resp1, err = client.Do(req1)
+		cancel1()
+	}
 	if err != nil {
 		return TestResult{ProxyId: proxyId, Ok: false, Error: err.Error()}
 	}
@@ -147,9 +270,10 @@ func unifiedDelayTest(proxyId string, px C.Proxy, testURL string, timeout time.D
 
 	// 步骤 3：第二次请求计时（纯 HTTP RTT）
 	start := time.Now()
-	req2, _ := http.NewRequestWithContext(ctx, http.MethodHead, testURL, nil)
+	req2, cancel2 := newRequest(method)
 	resp2, err := client.Do(req2)
 	latency := time.Since(start).Milliseconds()
+	cancel2()
 
 	if err != nil {
 		return TestResult{ProxyId: proxyId, Ok: false, LatencyMs: latency, Error: err.Error()}

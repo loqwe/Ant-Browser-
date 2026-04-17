@@ -143,6 +143,103 @@ var migrations = []migration{
 	//         `ALTER TABLE xxx ADD COLUMN yyy TEXT NOT NULL DEFAULT ''`,
 	//     },
 	// },
+	{
+		version: 7,
+		desc:    "subscription sources and chain proxy fields",
+		stmts: []string{
+			`CREATE TABLE IF NOT EXISTS subscription_sources (
+				source_id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				url TEXT NOT NULL,
+				enabled INTEGER NOT NULL DEFAULT 1,
+				refresh_interval_minutes INTEGER NOT NULL DEFAULT 60,
+				last_refresh_at TEXT NOT NULL DEFAULT '',
+				last_refresh_status TEXT NOT NULL DEFAULT '',
+				last_error TEXT NOT NULL DEFAULT '',
+				traffic_used TEXT NOT NULL DEFAULT '',
+				traffic_total TEXT NOT NULL DEFAULT '',
+				expire_at TEXT NOT NULL DEFAULT '',
+				raw_content_hash TEXT NOT NULL DEFAULT '',
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`ALTER TABLE browser_proxies ADD COLUMN source_node_name TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE browser_proxies ADD COLUMN display_group TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE browser_proxies ADD COLUMN chain_mode TEXT NOT NULL DEFAULT 'direct'`,
+			`ALTER TABLE browser_proxies ADD COLUMN upstream_proxy_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE browser_proxies ADD COLUMN upstream_alias TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE browser_proxies ADD COLUMN raw_proxy_group_name TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE browser_proxies ADD COLUMN raw_proxy_config TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE browser_proxies ADD COLUMN chain_status TEXT NOT NULL DEFAULT 'resolved'`,
+		},
+	},
+	{
+		version: 8,
+		desc:    "subscription selector metadata",
+		stmts: []string{
+			`ALTER TABLE subscription_sources ADD COLUMN proxy_groups_json TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE subscription_sources ADD COLUMN selected_proxy_groups_json TEXT NOT NULL DEFAULT ''`,
+		},
+	},
+	{
+		version: 9,
+		desc:    "subscription selected import catalog",
+		stmts: []string{
+			`ALTER TABLE subscription_sources ADD COLUMN import_mode TEXT NOT NULL DEFAULT 'all'`,
+			`ALTER TABLE subscription_sources ADD COLUMN selected_node_keys_json TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE subscription_sources ADD COLUMN import_stats_json TEXT NOT NULL DEFAULT ''`,
+			`CREATE TABLE IF NOT EXISTS subscription_nodes (
+				node_key TEXT NOT NULL,
+				source_id TEXT NOT NULL,
+				node_name TEXT NOT NULL DEFAULT '',
+				protocol TEXT NOT NULL DEFAULT '',
+				server TEXT NOT NULL DEFAULT '',
+				port INTEGER NOT NULL DEFAULT 0,
+				display_group TEXT NOT NULL DEFAULT '',
+				chain_mode TEXT NOT NULL DEFAULT '',
+				upstream_alias TEXT NOT NULL DEFAULT '',
+				node_json TEXT NOT NULL DEFAULT '',
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (source_id, node_key)
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_subscription_nodes_source_id ON subscription_nodes(source_id)`,
+		},
+	},
+	{
+		version: 10,
+		desc:    "添加扩展仓库与实例扩展绑定表",
+		stmts: []string{
+			`CREATE TABLE IF NOT EXISTS browser_extensions (
+				extension_id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				source_type TEXT NOT NULL DEFAULT '',
+				source_path TEXT NOT NULL DEFAULT '',
+				unpacked_path TEXT NOT NULL DEFAULT '',
+				version TEXT NOT NULL DEFAULT '',
+				description TEXT NOT NULL DEFAULT '',
+				permissions TEXT NOT NULL DEFAULT '[]',
+				host_permissions TEXT NOT NULL DEFAULT '[]',
+				options_page TEXT NOT NULL DEFAULT '',
+				icon_path TEXT NOT NULL DEFAULT '',
+				enabled_by_default INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL,
+				updated_at DATETIME NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS browser_profile_extensions (
+				binding_id TEXT PRIMARY KEY,
+				profile_id TEXT NOT NULL,
+				extension_id TEXT NOT NULL,
+				enabled INTEGER NOT NULL DEFAULT 1,
+				sort_order INTEGER NOT NULL DEFAULT 0,
+				created_at DATETIME NOT NULL,
+				updated_at DATETIME NOT NULL,
+				FOREIGN KEY(profile_id) REFERENCES browser_profiles(profile_id) ON DELETE CASCADE,
+				FOREIGN KEY(extension_id) REFERENCES browser_extensions(extension_id) ON DELETE CASCADE
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_browser_profile_extensions_profile_id ON browser_profile_extensions(profile_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_browser_profile_extensions_extension_id ON browser_profile_extensions(extension_id)`,
+		},
+	},
+
 }
 
 // NewDB 创建新的数据库连接

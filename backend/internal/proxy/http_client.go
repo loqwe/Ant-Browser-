@@ -19,66 +19,102 @@ func buildProxyHTTPClient(
 	proxies []config.BrowserProxy,
 	xrayMgr *XrayManager,
 	singboxMgr *SingBoxManager,
+	mihomoMgr *MihomoManager,
 	timeout time.Duration,
 ) (*http.Client, error) {
+	src, chain, chained, err := ResolveRuntimeChain(src, proxies, proxyId)
+	if err != nil {
+		return nil, err
+	}
 	l := strings.ToLower(strings.TrimSpace(src))
+	if chained {
+		if SupportsMihomoChain(chain) {
+			if mihomoMgr == nil {
+				return nil, fmt.Errorf("mihomo manager unavailable")
+			}
+			socks5Addr, chainErr := mihomoMgr.EnsureChainBridge(chain)
+			if chainErr != nil {
+				return nil, fmt.Errorf("mihomo chain bridge failed: %w", chainErr)
+			}
+			return buildSocks5HTTPClient(strings.TrimPrefix(socks5Addr, "socks5://"), timeout)
+		}
+		if ChainUsesSingBox(chain) {
+			if singboxMgr == nil {
+				return nil, fmt.Errorf("sing-box ???????")
+			}
+			socks5Addr, chainErr := singboxMgr.EnsureChainBridge(chain)
+			if chainErr != nil {
+				return nil, fmt.Errorf("sing-box ????????: %w", chainErr)
+			}
+			return buildSocks5HTTPClient(strings.TrimPrefix(socks5Addr, "socks5://"), timeout)
+		}
+		if xrayMgr == nil {
+			return nil, fmt.Errorf("xray ???????")
+		}
+		socks5Addr, chainErr := xrayMgr.EnsureChainBridge(chain)
+		if chainErr != nil {
+			return nil, fmt.Errorf("xray ????????: %w", chainErr)
+		}
+		return buildSocks5HTTPClient(strings.TrimPrefix(socks5Addr, "socks5://"), timeout)
+	}
 	if l == "" || l == "direct://" {
 		return &http.Client{Timeout: timeout}, nil
 	}
-
+	if SupportsMihomoBridge(src) {
+		if mihomoMgr == nil {
+			return nil, fmt.Errorf("mihomo manager unavailable")
+		}
+		socks5Addr, bridgeErr := mihomoMgr.EnsureBridge(src)
+		if bridgeErr != nil {
+			return nil, fmt.Errorf("mihomo bridge failed: %w", bridgeErr)
+		}
+		return buildSocks5HTTPClient(strings.TrimPrefix(socks5Addr, "socks5://"), timeout)
+	}
 	if IsSingBoxProtocol(src) {
 		if singboxMgr == nil {
-			return nil, fmt.Errorf("sing-box 管理器未初始化")
+			return nil, fmt.Errorf("sing-box ???????")
 		}
-		socks5Addr, err := singboxMgr.EnsureBridge(src, proxies, proxyId)
-		if err != nil {
-			return nil, fmt.Errorf("sing-box 桥接启动失败: %w", err)
+		socks5Addr, bridgeErr := singboxMgr.EnsureBridge(src, proxies, proxyId)
+		if bridgeErr != nil {
+			return nil, fmt.Errorf("sing-box ??????: %w", bridgeErr)
 		}
 		return buildSocks5HTTPClient(strings.TrimPrefix(socks5Addr, "socks5://"), timeout)
 	}
-
 	if RequiresBridge(src, proxies, proxyId) {
 		if xrayMgr == nil {
-			return nil, fmt.Errorf("xray 管理器未初始化")
+			return nil, fmt.Errorf("xray ???????")
 		}
-		socks5Addr, err := xrayMgr.EnsureBridge(src, proxies, proxyId)
-		if err != nil {
-			return nil, fmt.Errorf("xray 桥接启动失败: %w", err)
+		socks5Addr, bridgeErr := xrayMgr.EnsureBridge(src, proxies, proxyId)
+		if bridgeErr != nil {
+			return nil, fmt.Errorf("xray ??????: %w", bridgeErr)
 		}
 		return buildSocks5HTTPClient(strings.TrimPrefix(socks5Addr, "socks5://"), timeout)
 	}
-
 	if strings.HasPrefix(l, "socks5://") {
-		u, err := url.Parse(src)
-		if err != nil {
-			return nil, fmt.Errorf("SOCKS5 地址解析失败: %w", err)
+		u, parseErr := url.Parse(src)
+		if parseErr != nil {
+			return nil, fmt.Errorf("SOCKS5 ??????: %w", parseErr)
 		}
 		var auth *xproxy.Auth
 		if u.User != nil {
 			pass, _ := u.User.Password()
-			auth = &xproxy.Auth{
-				User:     u.User.Username(),
-				Password: pass,
-			}
+			auth = &xproxy.Auth{User: u.User.Username(), Password: pass}
 		}
-		dialer, err := xproxy.SOCKS5("tcp", u.Host, auth, xproxy.Direct)
-		if err != nil {
-			return nil, fmt.Errorf("SOCKS5 dialer 创建失败: %w", err)
+		dialer, dialErr := xproxy.SOCKS5("tcp", u.Host, auth, xproxy.Direct)
+		if dialErr != nil {
+			return nil, fmt.Errorf("SOCKS5 dialer ????: %w", dialErr)
 		}
 		contextDialer, ok := dialer.(xproxy.ContextDialer)
 		if !ok {
-			return nil, fmt.Errorf("SOCKS5 dialer 不支持 ContextDialer")
+			return nil, fmt.Errorf("SOCKS5 dialer ??? ContextDialer")
 		}
-		transport := &http.Transport{DialContext: contextDialer.DialContext}
-		return &http.Client{Transport: transport, Timeout: timeout}, nil
+		return &http.Client{Transport: &http.Transport{DialContext: contextDialer.DialContext}, Timeout: timeout}, nil
 	}
-
-	proxyURL, err := url.Parse(src)
-	if err != nil {
-		return nil, fmt.Errorf("代理地址解析失败: %w", err)
+	proxyURL, parseErr := url.Parse(src)
+	if parseErr != nil {
+		return nil, fmt.Errorf("????????: %w", parseErr)
 	}
-	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
-	return &http.Client{Transport: transport, Timeout: timeout}, nil
+	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}, Timeout: timeout}, nil
 }
 
 func buildSocks5HTTPClient(socks5Host string, timeout time.Duration) (*http.Client, error) {

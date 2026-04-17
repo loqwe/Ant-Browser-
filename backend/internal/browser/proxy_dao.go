@@ -13,6 +13,7 @@ type ProxyDAO interface {
 	ListGroups() ([]string, error)
 	Upsert(proxy Proxy) error
 	Delete(proxyId string) error
+	DeleteBySource(sourceID string) error
 	DeleteAll() error
 	UpdateSpeedResult(proxyId string, ok bool, latencyMs int64, testedAt string) error
 	UpdateIPHealthResult(proxyId string, healthJSON string) error
@@ -34,6 +35,9 @@ func (d *SQLiteProxyDAO) List() ([]Proxy, error) {
 		SELECT proxy_id, proxy_name, proxy_config, dns_servers, COALESCE(group_name, ''),
 		       COALESCE(source_id, ''), COALESCE(source_url, ''), COALESCE(source_name_prefix, ''),
 		       COALESCE(source_auto_refresh, 0), COALESCE(source_refresh_interval_m, 0), COALESCE(source_last_refresh_at, ''),
+		       COALESCE(source_node_name, ''), COALESCE(display_group, ''), COALESCE(chain_mode, ''),
+		       COALESCE(upstream_proxy_id, ''), COALESCE(upstream_alias, ''), COALESCE(raw_proxy_group_name, ''),
+		       COALESCE(raw_proxy_config, ''), COALESCE(chain_status, ''),
 		       COALESCE(last_latency_ms, -1), COALESCE(last_test_ok, 0), COALESCE(last_tested_at, ''),
 		       COALESCE(last_ip_health_json, ''),
 		       sort_order
@@ -51,6 +55,9 @@ func (d *SQLiteProxyDAO) ListByGroup(groupName string) ([]Proxy, error) {
 		SELECT proxy_id, proxy_name, proxy_config, dns_servers, COALESCE(group_name, ''),
 		       COALESCE(source_id, ''), COALESCE(source_url, ''), COALESCE(source_name_prefix, ''),
 		       COALESCE(source_auto_refresh, 0), COALESCE(source_refresh_interval_m, 0), COALESCE(source_last_refresh_at, ''),
+		       COALESCE(source_node_name, ''), COALESCE(display_group, ''), COALESCE(chain_mode, ''),
+		       COALESCE(upstream_proxy_id, ''), COALESCE(upstream_alias, ''), COALESCE(raw_proxy_group_name, ''),
+		       COALESCE(raw_proxy_config, ''), COALESCE(chain_status, ''),
 		       COALESCE(last_latency_ms, -1), COALESCE(last_test_ok, 0), COALESCE(last_tested_at, ''),
 		       COALESCE(last_ip_health_json, ''),
 		       sort_order
@@ -95,27 +102,37 @@ func (d *SQLiteProxyDAO) Upsert(proxy Proxy) error {
 		INSERT INTO browser_proxies (
 		  proxy_id, proxy_name, proxy_config, dns_servers, group_name,
 		  source_id, source_url, source_name_prefix, source_auto_refresh, source_refresh_interval_m, source_last_refresh_at,
+		  source_node_name, display_group, chain_mode, upstream_proxy_id, upstream_alias, raw_proxy_group_name, raw_proxy_config, chain_status,
 		  sort_order, created_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(proxy_id) DO UPDATE SET
-		  proxy_name   = excluded.proxy_name,
+		  proxy_name = excluded.proxy_name,
 		  proxy_config = excluded.proxy_config,
-		  dns_servers  = excluded.dns_servers,
-		  group_name   = excluded.group_name,
-		  source_id    = excluded.source_id,
-		  source_url   = excluded.source_url,
+		  dns_servers = excluded.dns_servers,
+		  group_name = excluded.group_name,
+		  source_id = excluded.source_id,
+		  source_url = excluded.source_url,
 		  source_name_prefix = excluded.source_name_prefix,
 		  source_auto_refresh = excluded.source_auto_refresh,
 		  source_refresh_interval_m = excluded.source_refresh_interval_m,
 		  source_last_refresh_at = excluded.source_last_refresh_at,
-		  sort_order   = excluded.sort_order`,
+		  source_node_name = excluded.source_node_name,
+		  display_group = excluded.display_group,
+		  chain_mode = excluded.chain_mode,
+		  upstream_proxy_id = excluded.upstream_proxy_id,
+		  upstream_alias = excluded.upstream_alias,
+		  raw_proxy_group_name = excluded.raw_proxy_group_name,
+		  raw_proxy_config = excluded.raw_proxy_config,
+		  chain_status = excluded.chain_status,
+		  sort_order = excluded.sort_order`,
 		proxy.ProxyId, proxy.ProxyName, proxy.ProxyConfig, proxy.DnsServers, proxy.GroupName,
 		proxy.SourceID, proxy.SourceURL, proxy.SourceNamePrefix, autoRefreshInt, proxy.SourceRefreshIntervalM, proxy.SourceLastRefreshAt,
+		proxy.SourceNodeName, proxy.DisplayGroup, proxy.ChainMode, proxy.UpstreamProxyId, proxy.UpstreamAlias, proxy.RawProxyGroupName, proxy.RawProxyConfig, proxy.ChainStatus,
 		proxy.SortOrder, now,
 	)
 	if err != nil {
-		return fmt.Errorf("保存代理失败: %w", err)
+		return fmt.Errorf("??????: %w", err)
 	}
 	return nil
 }
@@ -130,6 +147,15 @@ func (d *SQLiteProxyDAO) Delete(proxyId string) error {
 }
 
 // DeleteAll 清空代理表（批量保存前使用）
+// DeleteBySource ???????????
+func (d *SQLiteProxyDAO) DeleteBySource(sourceID string) error {
+	_, err := d.db.Exec(`DELETE FROM browser_proxies WHERE source_id = ?`, sourceID)
+	if err != nil {
+		return fmt.Errorf("????????: %w", err)
+	}
+	return nil
+}
+
 func (d *SQLiteProxyDAO) DeleteAll() error {
 	_, err := d.db.Exec(`DELETE FROM browser_proxies`)
 	if err != nil {
@@ -173,9 +199,11 @@ func scanProxies(rows *sql.Rows) ([]Proxy, error) {
 		if err := rows.Scan(
 			&p.ProxyId, &p.ProxyName, &p.ProxyConfig, &p.DnsServers, &p.GroupName,
 			&p.SourceID, &p.SourceURL, &p.SourceNamePrefix, &autoRefreshInt, &p.SourceRefreshIntervalM, &p.SourceLastRefreshAt,
+			&p.SourceNodeName, &p.DisplayGroup, &p.ChainMode, &p.UpstreamProxyId, &p.UpstreamAlias, &p.RawProxyGroupName,
+			&p.RawProxyConfig, &p.ChainStatus,
 			&p.LastLatencyMs, &okInt, &p.LastTestedAt, &p.LastIPHealthJSON, &p.SortOrder,
 		); err != nil {
-			return nil, fmt.Errorf("读取代理行失败: %w", err)
+			return nil, fmt.Errorf("???????: %w", err)
 		}
 		p.LastTestOk = okInt == 1
 		p.SourceAutoRefresh = autoRefreshInt == 1

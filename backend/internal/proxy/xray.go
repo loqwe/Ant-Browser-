@@ -53,47 +53,37 @@ func NewXrayManager(cfg *config.Config, appRoot string) *XrayManager {
 // ValidateProxyConfig 验证代理配置是否支持
 // 返回: supported bool, errorMsg string
 func ValidateProxyConfig(proxyConfig string, proxies []config.BrowserProxy, proxyId string) (bool, string) {
-	src := strings.TrimSpace(proxyConfig)
-	found := false
-	if proxyId != "" {
-		for _, item := range proxies {
-			if strings.EqualFold(item.ProxyId, proxyId) {
-				src = strings.TrimSpace(item.ProxyConfig)
-				found = true
-				break
+	src, chain, chained, err := ResolveRuntimeChain(proxyConfig, proxies, proxyId)
+	if err != nil {
+		return false, fmt.Sprintf("代理节点不存在（proxyId=%s）: %v", proxyId, err)
+	}
+	if chained {
+		if ChainUsesSingBox(chain) {
+			if _, compileErr := CompileSingBoxChain(chain); compileErr != nil {
+				return false, fmt.Sprintf("解析失败: %v", compileErr)
 			}
+			return true, ""
 		}
-		if !found {
-			// 兼容模式：如果 profile 内仍保留了可解析的 proxyConfig，则允许回退使用。
-			// 这样可兼容历史版本中 proxyId 失效后的启动流程，避免升级后强制手工重绑。
-			if src == "" {
-				return false, fmt.Sprintf("代理链路不可用：代理池节点已不存在（proxyId=%s）。可能因订阅刷新后节点下线或被删除，请重新选择代理后再启动。", proxyId)
-			}
+		if _, compileErr := CompileXrayChain(chain); compileErr != nil {
+			return false, fmt.Sprintf("解析失败: %v", compileErr)
 		}
+		return true, ""
 	}
 	if src == "" {
-		return true, "" // 无代理配置，允许启动
+		return true, ""
 	}
 	if strings.EqualFold(src, "direct://") {
 		return true, ""
 	}
-	l := strings.ToLower(src)
-	// 标准代理格式，支持
-	if strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "socks5://") {
-		return true, ""
-	}
-	// hysteria2/tuic 通过 sing-box 支持，先做可解析性校验
 	if IsSingBoxProtocol(src) {
-		if _, err := BuildSingBoxOutbound(src); err != nil {
-			return false, fmt.Sprintf("代理配置解析失败: %v", err)
+		if _, parseErr := BuildSingBoxOutbound(src); parseErr != nil {
+			return false, fmt.Sprintf("解析失败: %v", parseErr)
 		}
 		return true, ""
 	}
-
-	// 其余协议交给统一解析器校验，防止无效字符串被当成代理参数透传给 Chrome
-	standardProxy, outbound, err := ParseProxyNode(src)
-	if err != nil {
-		return false, fmt.Sprintf("代理配置解析失败: %v", err)
+	standardProxy, outbound, parseErr := ParseProxyNode(src)
+	if parseErr != nil {
+		return false, fmt.Sprintf("解析失败: %v", parseErr)
 	}
 	if strings.TrimSpace(standardProxy) == "" && outbound == nil {
 		return false, "代理配置无效"
@@ -105,34 +95,24 @@ func ValidateProxyConfig(proxyConfig string, proxies []config.BrowserProxy, prox
 // 注意: Xray 仅支持 vless/vmess/trojan/shadowsocks 等协议
 // hysteria2 不支持，需要使用 Hysteria 客户端或 sing-box
 func RequiresBridge(proxyConfig string, proxies []config.BrowserProxy, proxyId string) bool {
-	src := strings.TrimSpace(proxyConfig)
-	if proxyId != "" {
-		for _, item := range proxies {
-			if strings.EqualFold(item.ProxyId, proxyId) {
-				src = strings.TrimSpace(item.ProxyConfig)
-				break
-			}
-		}
+	src, _, chained, err := ResolveRuntimeChain(proxyConfig, proxies, proxyId)
+	if err == nil && chained {
+		return true
 	}
-	if src == "" {
+	if strings.TrimSpace(src) == "" {
 		return false
 	}
 	l := strings.ToLower(src)
-	// 标准代理格式，不需要桥接
 	if strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "socks5://") {
 		return false
 	}
-	// hysteria2 Xray 不支持，不触发桥接
 	if strings.HasPrefix(l, "hysteria://") || strings.HasPrefix(l, "hysteria2://") {
 		return false
 	}
-	// Xray 支持的协议
 	if strings.HasPrefix(l, "vmess://") || strings.HasPrefix(l, "vless://") || strings.HasPrefix(l, "trojan://") || strings.HasPrefix(l, "ss://") {
 		return true
 	}
-	// Clash 格式需要进一步检查类型
 	if strings.HasPrefix(l, "clash://") || strings.Contains(l, "type:") || strings.Contains(l, "proxies:") {
-		// 排除 hysteria 类型
 		if strings.Contains(l, "type: hysteria") || strings.Contains(l, "type:hysteria") {
 			return false
 		}

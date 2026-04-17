@@ -13,20 +13,17 @@ interface FlatGroup extends BrowserGroup {
   level: number
 }
 
+function normalizeParentId(parentId?: string | null) {
+  return (parentId || '').trim()
+}
+
 // 将分组列表扁平化并计算层级
 function flattenGroups(groups: BrowserGroup[]): FlatGroup[] {
-  const map = new Map<string, BrowserGroup>()
-  groups.forEach(g => map.set(g.groupId, g))
-
-  const getLevel = (g: BrowserGroup): number => {
-    if (!g.parentId || !map.has(g.parentId)) return 0
-    return 1 + getLevel(map.get(g.parentId)!)
-  }
-
   const result: FlatGroup[] = []
+
   const addChildren = (parentId: string, level: number) => {
     groups
-      .filter(g => g.parentId === parentId)
+      .filter(g => normalizeParentId(g.parentId) === parentId)
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .forEach(g => {
         result.push({ ...g, level })
@@ -34,8 +31,13 @@ function flattenGroups(groups: BrowserGroup[]): FlatGroup[] {
       })
   }
 
-  // 先添加根级分组
-  addChildren('', 0)
+  groups
+    .filter(g => !normalizeParentId(g.parentId))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .forEach(g => {
+      result.push({ ...g, level: 0 })
+      addChildren(g.groupId, 1)
+    })
 
   return result
 }

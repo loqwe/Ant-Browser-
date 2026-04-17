@@ -156,6 +156,14 @@ type BrowserProxy struct {
 	SourceAutoRefresh      bool   `yaml:"source_auto_refresh,omitempty" json:"sourceAutoRefresh,omitempty"`
 	SourceRefreshIntervalM int    `yaml:"source_refresh_interval_m,omitempty" json:"sourceRefreshIntervalM,omitempty"`
 	SourceLastRefreshAt    string `yaml:"source_last_refresh_at,omitempty" json:"sourceLastRefreshAt,omitempty"`
+	SourceNodeName         string `yaml:"source_node_name,omitempty" json:"sourceNodeName,omitempty"`
+	DisplayGroup           string `yaml:"display_group,omitempty" json:"displayGroup,omitempty"`
+	ChainMode              string `yaml:"chain_mode,omitempty" json:"chainMode,omitempty"`
+	UpstreamProxyId        string `yaml:"upstream_proxy_id,omitempty" json:"upstreamProxyId,omitempty"`
+	UpstreamAlias          string `yaml:"upstream_alias,omitempty" json:"upstreamAlias,omitempty"`
+	RawProxyGroupName      string `yaml:"raw_proxy_group_name,omitempty" json:"rawProxyGroupName,omitempty"`
+	RawProxyConfig         string `yaml:"raw_proxy_config,omitempty" json:"rawProxyConfig,omitempty"`
+	ChainStatus            string `yaml:"chain_status,omitempty" json:"chainStatus,omitempty"`
 	// 测速结果（运行时字段，不写入 yaml）
 	LastLatencyMs int64  `yaml:"-" json:"lastLatencyMs"`
 	LastTestOk    bool   `yaml:"-" json:"lastTestOk"`

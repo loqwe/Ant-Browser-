@@ -84,6 +84,13 @@ func (a *App) browserInstanceStartInternal(profileId string, extraLaunchArgs []s
 		_ = a.browserMgr.SaveProfiles()
 	}
 
+	extensionPaths, err := a.browserMgr.ExtensionLoadPaths(profileId)
+	if err != nil {
+		startErr := fmt.Errorf("???????????????????%v", err)
+		profile.LastError = startErr.Error()
+		return profile, startErr
+	}
+
 	chromeBinaryPath, err := a.browserMgr.ResolveChromeBinary(profile)
 	if err != nil {
 		startErr := fmt.Errorf("实例启动失败：%w", err)
@@ -107,9 +114,14 @@ func (a *App) browserInstanceStartInternal(profileId string, extraLaunchArgs []s
 	proxies := a.getLatestProxies()
 	acquiredXrayBridgeKey := ""
 	releaseXrayBridge := false
+	acquiredMihomoBridgeKey := ""
+	releaseMihomoBridge := false
 	defer func() {
 		if releaseXrayBridge && acquiredXrayBridgeKey != "" && a.xrayMgr != nil {
 			a.xrayMgr.ReleaseBridge(acquiredXrayBridgeKey)
+		}
+		if releaseMihomoBridge && acquiredMihomoBridgeKey != "" && a.mihomoMgr != nil {
+			a.mihomoMgr.ReleaseBridge(acquiredMihomoBridgeKey)
 		}
 	}()
 
@@ -123,58 +135,101 @@ func (a *App) browserInstanceStartInternal(profileId string, extraLaunchArgs []s
 			}
 		}
 	}
+	resolvedProxyConfig, resolvedChain, chainActive, _ := proxy.ResolveRuntimeChain(resolvedProxyConfig, proxies, profile.ProxyId)
 	effectiveProxy := resolvedProxyConfig
-	log.Info("代理配置检查",
+	log.Info("??????",
 		logger.F("profile_id", profileId),
 		logger.F("proxy_id", profile.ProxyId),
 		logger.F("profile_proxy_config", profile.ProxyConfig),
 		logger.F("resolved_proxy_config", resolvedProxyConfig),
+		logger.F("chain_active", chainActive),
 	)
 	if supported, errorMsg := proxy.ValidateProxyConfig(resolvedProxyConfig, proxies, profile.ProxyId); !supported {
-		startErr := fmt.Errorf("实例启动失败：%s", errorMsg)
+		startErr := fmt.Errorf("???????%s", errorMsg)
 		profile.LastError = startErr.Error()
-		log.Error("代理配置无效", logger.F("profile_id", profileId), logger.F("proxy_id", profile.ProxyId), logger.F("error", errorMsg), logger.F("reason", startErr.Error()))
+		log.Error("??????", logger.F("profile_id", profileId), logger.F("proxy_id", profile.ProxyId), logger.F("error", errorMsg), logger.F("reason", startErr.Error()))
 		return profile, startErr
 	}
 
-	if proxy.IsSingBoxProtocol(resolvedProxyConfig) {
-		// hysteria2 / tuic → sing-box 桥接
-		socksURL, bridgeErr := a.singboxMgr.EnsureBridge(resolvedProxyConfig, proxies, profile.ProxyId)
+	if chainActive {
+		if proxy.SupportsMihomoChain(resolvedChain) {
+			socksURL, bridgeKey, bridgeErr := a.mihomoMgr.AcquireChainBridge(resolvedChain)
+			if bridgeErr != nil {
+				startErr := fmt.Errorf("mihomo chain bridge failed: %w", bridgeErr)
+				log.Error("mihomo chain bridge failed", logger.F("error", bridgeErr.Error()), logger.F("reason", startErr.Error()))
+				profile.LastError = startErr.Error()
+				return profile, startErr
+			}
+			acquiredMihomoBridgeKey = bridgeKey
+			releaseMihomoBridge = bridgeKey != ""
+			effectiveProxy = socksURL
+			log.Info("mihomo chain bridge", logger.F("socks_url", socksURL))
+		} else if proxy.ChainUsesSingBox(resolvedChain) {
+			socksURL, bridgeErr := a.singboxMgr.EnsureChainBridge(resolvedChain)
+			if bridgeErr != nil {
+				startErr := fmt.Errorf("??????????????????sing-box??%v", bridgeErr)
+				log.Error("????????(sing-box)", logger.F("error", bridgeErr.Error()), logger.F("reason", startErr.Error()))
+				profile.LastError = startErr.Error()
+				return profile, startErr
+			}
+			effectiveProxy = socksURL
+			log.Info("sing-box ??????", logger.F("socks_url", socksURL))
+		} else {
+			socksURL, bridgeKey, bridgeErr := a.xrayMgr.AcquireChainBridge(resolvedChain)
+			if bridgeErr != nil {
+				startErr := fmt.Errorf("??????????????????xray??%v", bridgeErr)
+				log.Error("????????(xray)", logger.F("error", bridgeErr.Error()), logger.F("reason", startErr.Error()))
+				profile.LastError = startErr.Error()
+				return profile, startErr
+			}
+			acquiredXrayBridgeKey = bridgeKey
+			releaseXrayBridge = bridgeKey != ""
+			effectiveProxy = socksURL
+			log.Info("xray ??????", logger.F("socks_url", socksURL))
+		}
+	} else if proxy.SupportsMihomoBridge(resolvedProxyConfig) {
+		socksURL, bridgeKey, bridgeErr := a.mihomoMgr.AcquireBridge(resolvedProxyConfig)
 		if bridgeErr != nil {
-			startErr := fmt.Errorf("实例启动失败：代理桥接启动失败（sing-box）。原因：%v。请检查代理节点配置、sing-box 可执行文件是否存在，以及本地端口是否被占用。", bridgeErr)
-			log.Error("代理桥接失败(sing-box)", logger.F("error", bridgeErr.Error()), logger.F("reason", startErr.Error()))
+			startErr := fmt.Errorf("mihomo bridge failed: %w", bridgeErr)
+			log.Error("mihomo bridge failed", logger.F("error", bridgeErr.Error()), logger.F("reason", startErr.Error()))
 			profile.LastError = startErr.Error()
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "proxy:bridge:failed", map[string]interface{}{
-					"profileId":   profileId,
-					"profileName": profile.ProfileName,
-					"error":       startErr.Error(),
-				})
+				runtime.EventsEmit(a.ctx, "proxy:bridge:failed", map[string]interface{}{"profileId": profileId, "profileName": profile.ProfileName, "error": startErr.Error()})
+			}
+			return profile, startErr
+		}
+		acquiredMihomoBridgeKey = bridgeKey
+		releaseMihomoBridge = bridgeKey != ""
+		effectiveProxy = socksURL
+		log.Info("mihomo bridge", logger.F("socks_url", socksURL))
+	} else if proxy.IsSingBoxProtocol(resolvedProxyConfig) {
+		socksURL, bridgeErr := a.singboxMgr.EnsureBridge(resolvedProxyConfig, proxies, profile.ProxyId)
+		if bridgeErr != nil {
+			startErr := fmt.Errorf("????????????????sing-box??%v", bridgeErr)
+			log.Error("??????(sing-box)", logger.F("error", bridgeErr.Error()), logger.F("reason", startErr.Error()))
+			profile.LastError = startErr.Error()
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "proxy:bridge:failed", map[string]interface{}{"profileId": profileId, "profileName": profile.ProfileName, "error": startErr.Error()})
 			}
 			return profile, startErr
 		}
 		effectiveProxy = socksURL
-		log.Info("sing-box 桥接成功", logger.F("socks_url", socksURL))
+		log.Info("sing-box ????", logger.F("socks_url", socksURL))
 	} else if proxy.RequiresBridge(resolvedProxyConfig, proxies, profile.ProxyId) {
-		// vmess / vless / trojan / ss → xray 桥接
 		socksURL, bridgeKey, bridgeErr := a.xrayMgr.AcquireBridge(resolvedProxyConfig, proxies, profile.ProxyId)
 		if bridgeErr != nil {
-			startErr := fmt.Errorf("实例启动失败：代理桥接启动失败（xray）。原因：%v。请检查代理节点配置、xray 可执行文件是否存在，以及本地端口是否被占用。", bridgeErr)
-			log.Error("代理桥接失败(xray)", logger.F("error", bridgeErr.Error()), logger.F("reason", startErr.Error()))
+			startErr := fmt.Errorf("????????????????xray??%v", bridgeErr)
+			log.Error("??????(xray)", logger.F("error", bridgeErr.Error()), logger.F("reason", startErr.Error()))
 			profile.LastError = startErr.Error()
 			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "proxy:bridge:failed", map[string]interface{}{
-					"profileId":   profileId,
-					"profileName": profile.ProfileName,
-					"error":       startErr.Error(),
-				})
+				runtime.EventsEmit(a.ctx, "proxy:bridge:failed", map[string]interface{}{"profileId": profileId, "profileName": profile.ProfileName, "error": startErr.Error()})
 			}
 			return profile, startErr
 		}
 		acquiredXrayBridgeKey = bridgeKey
 		releaseXrayBridge = bridgeKey != ""
 		effectiveProxy = socksURL
-		log.Info("xray 桥接成功", logger.F("socks_url", socksURL))
+		log.Info("xray ????", logger.F("socks_url", socksURL))
 	}
 
 	startReadyTimeout, startStableWindow := a.browserStartTimingSettings()
@@ -222,6 +277,7 @@ func (a *App) browserInstanceStartInternal(profileId string, extraLaunchArgs []s
 	args = append(args, profile.FingerprintArgs...)
 	args = append(args, sanitizedProfileLaunchArgs...)
 	args = append(args, sanitizedExtraLaunchArgs...)
+	args = browser.BuildExtensionLoadArgs(args, extensionPaths)
 	args = appendLaunchTargets(args, profile, normalizedStartURLs, skipDefaultStartURLs)
 
 	cmd := exec.Command(chromeBinaryPath, args...)
@@ -248,6 +304,10 @@ func (a *App) browserInstanceStartInternal(profileId string, extraLaunchArgs []s
 			if acquiredXrayBridgeKey != "" {
 				a.bindProfileXrayBridge(profileId, acquiredXrayBridgeKey)
 				releaseXrayBridge = false
+			}
+			if acquiredMihomoBridgeKey != "" {
+				a.bindProfileMihomoBridge(profileId, acquiredMihomoBridgeKey)
+				releaseMihomoBridge = false
 			}
 
 			log.Info("实例启动",

@@ -87,6 +87,14 @@ export interface BrowserProxy {
   sourceAutoRefresh?: boolean
   sourceRefreshIntervalM?: number
   sourceLastRefreshAt?: string
+  sourceNodeName?: string
+  displayGroup?: string
+  chainMode?: string
+  upstreamProxyId?: string
+  upstreamAlias?: string
+  rawProxyGroupName?: string
+  rawProxyConfig?: string
+  chainStatus?: string
   lastLatencyMs?: number
   lastTestOk?: boolean
   lastTestedAt?: string
@@ -114,6 +122,95 @@ export interface BrowserCoreExtended {
   coreId: string
   chromeVersion: string
   instanceCount: number
+}
+
+export interface BrowserSubscriptionSource {
+  sourceId: string
+  name: string
+  url: string
+  enabled: boolean
+  refreshIntervalMinutes: number
+  lastRefreshAt: string
+  lastRefreshStatus: string
+  lastError: string
+  trafficUsed: string
+  trafficTotal: string
+  expireAt: string
+  rawContentHash?: string
+  proxyGroupsJson?: string
+  selectedProxyGroupsJson?: string
+  importMode?: string
+  selectedNodeKeysJson?: string
+  importStatsJson?: string
+}
+
+export interface BrowserSubscriptionNode {
+  nodeKey: string
+  sourceId: string
+  nodeName: string
+  protocol: string
+  server: string
+  port: number
+  displayGroup: string
+  chainMode: string
+  upstreamAlias: string
+  nodeJson: string
+}
+
+export type SubscriptionRefreshStage = 'requested' | 'backendSynced' | 'uiSynced' | 'failed'
+
+export interface SubscriptionRefreshState {
+  stage: SubscriptionRefreshStage
+  message: string
+  updatedAt: number
+}
+
+export interface BrowserFingerprintSuggestion {
+  seed: string
+  brand: string
+  platform: string
+  lang: string
+  timezone: string
+  resolution: string
+  colorDepth: string
+  hardwareConcurrency: string
+  deviceMemory: string
+  touchPoints: string
+  canvasNoise: boolean
+  webglVendor: string
+  webglRenderer: string
+  audioNoise: boolean
+  fonts: string
+  webrtcPolicy: string
+  doNotTrack: boolean
+  mediaDevices: string
+}
+
+export interface BrowserExtension {
+  extensionId: string
+  name: string
+  sourceType: string
+  sourcePath: string
+  unpackedPath: string
+  version: string
+  description: string
+  permissions: string[]
+  hostPermissions: string[]
+  optionsPage: string
+  iconPath: string
+  enabledByDefault: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BrowserProfileExtensionBinding {
+  bindingId: string
+  profileId: string
+  extensionId: string
+  enabled: boolean
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
 }
 
 export interface CookieInfo {

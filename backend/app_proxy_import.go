@@ -1,11 +1,16 @@
 package backend
 
 import (
+	"ant-chrome/backend/internal/logger"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -14,11 +19,12 @@ import (
 
 const (
 	maxClashSubscriptionBytes = 8 * 1024 * 1024
-	clashSubscriptionTimeout  = 25 * time.Second
+	clashSubscriptionTimeout  = 45 * time.Second
 )
 
 // BrowserProxyFetchClashByURL 拉取 Clash 订阅 URL，并返回可直接导入的 YAML 文本与建议配置。
 func (a *App) BrowserProxyFetchClashByURL(rawURL string) (map[string]interface{}, error) {
+	log := logger.New("Subscription")
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return nil, fmt.Errorf("订阅 URL 不能为空")
@@ -33,47 +39,104 @@ func (a *App) BrowserProxyFetchClashByURL(rawURL string) (map[string]interface{}
 		return nil, fmt.Errorf("仅支持 http/https URL")
 	}
 
-	req, err := http.NewRequest(http.MethodGet, parsedURL.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("创建请求失败: %w", err)
-	}
-	req.Header.Set("User-Agent", "clash-verge/2.0 ant-chrome/1.0")
-	req.Header.Set("Accept", "application/yaml,text/yaml,text/plain,*/*")
-	req.Header.Set("Cache-Control", "no-cache")
+	log.Info("开始拉取订阅", logger.F("url", parsedURL.String()), logger.F("timeout_ms", clashSubscriptionTimeout.Milliseconds()))
 
-	client := &http.Client{
-		Timeout: clashSubscriptionTimeout,
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("拉取订阅失败: %w", err)
-	}
-	defer resp.Body.Close()
+	if goruntime.GOOS == "windows" {
+		if body, err := downloadSubscriptionBytesWithCurl(parsedURL.String()); err == nil {
+			log.Info("curl 拉取订阅成功", logger.F("url", parsedURL.String()), logger.F("size", len(body)))
+			return buildClashSubscriptionPreview(parsedURL, body, log)
+		} else {
+			log.Warn("curl 拉取订阅失败，准备回退 PowerShell", logger.F("url", parsedURL.String()), logger.F("error", err.Error()))
+		}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("拉取订阅失败: HTTP %d", resp.StatusCode)
+		if body, err := downloadSubscriptionBytesWithPowerShell(parsedURL.String()); err == nil {
+			log.Info("PowerShell 拉取订阅成功", logger.F("url", parsedURL.String()), logger.F("size", len(body)))
+			return buildClashSubscriptionPreview(parsedURL, body, log)
+		} else {
+			log.Warn("PowerShell 拉取订阅失败，准备回退 Go HTTP", logger.F("url", parsedURL.String()), logger.F("error", err.Error()))
+		}
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxClashSubscriptionBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("读取订阅内容失败: %w", err)
-	}
-	if len(body) > maxClashSubscriptionBytes {
-		return nil, fmt.Errorf("订阅内容过大（超过 8MB）")
+	client := &http.Client{Timeout: clashSubscriptionTimeout}
+	var body []byte
+	for attempt := 1; attempt <= 3; attempt++ {
+		req, err := http.NewRequest(http.MethodGet, parsedURL.String(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("创建请求失败: %w", err)
+		}
+		req.Header.Set("User-Agent", "clash-verge/2.0 ant-chrome/1.0")
+		req.Header.Set("Accept", "application/yaml,text/yaml,text/plain,*/*")
+		req.Header.Set("Cache-Control", "no-cache")
+		log.Info("订阅拉取尝试", logger.F("url", parsedURL.String()), logger.F("attempt", attempt))
+
+		resp, err := client.Do(req)
+		if err != nil {
+			if attempt < 3 {
+				log.Warn("订阅拉取失败，准备重试", logger.F("url", parsedURL.String()), logger.F("attempt", attempt), logger.F("error", err.Error()))
+				time.Sleep(time.Duration(attempt) * 800 * time.Millisecond)
+				continue
+			}
+			log.Error("订阅拉取失败", logger.F("url", parsedURL.String()), logger.F("attempt", attempt), logger.F("error", err.Error()))
+			return nil, fmt.Errorf("拉取订阅失败: %w", err)
+		}
+
+		func() {
+			defer resp.Body.Close()
+			log.Info("订阅响应已返回", logger.F("url", parsedURL.String()), logger.F("attempt", attempt), logger.F("status", resp.StatusCode))
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				err = fmt.Errorf("拉取订阅失败: HTTP %d", resp.StatusCode)
+				return
+			}
+			body, err = io.ReadAll(io.LimitReader(resp.Body, maxClashSubscriptionBytes+1))
+			if err != nil {
+				err = fmt.Errorf("读取订阅内容失败: %w", err)
+				return
+			}
+			if len(body) > maxClashSubscriptionBytes {
+				err = fmt.Errorf("订阅内容过大（超过 8MB）")
+				return
+			}
+			err = nil
+		}()
+
+		if err == nil {
+			break
+		}
+		if attempt < 3 && shouldRetrySubscriptionFetch(err) {
+			log.Warn("订阅拉取结果异常，准备重试", logger.F("url", parsedURL.String()), logger.F("attempt", attempt), logger.F("error", err.Error()))
+			time.Sleep(time.Duration(attempt) * 800 * time.Millisecond)
+			continue
+		}
+		log.Error("订阅拉取结果异常", logger.F("url", parsedURL.String()), logger.F("attempt", attempt), logger.F("error", err.Error()))
+		return nil, err
 	}
 
+	return buildClashSubscriptionPreview(parsedURL, body, log)
+}
+
+func buildClashSubscriptionPreview(parsedURL *url.URL, body []byte, log *logger.Logger) (map[string]interface{}, error) {
 	content, payload, err := normalizeClashSubscriptionContent(body)
 	if err != nil {
+		if log != nil {
+			log.Error("订阅解析失败", logger.F("url", parsedURL.String()), logger.F("error", err.Error()))
+		}
 		return nil, err
 	}
 
 	proxyCount := clashProxyCount(payload)
 	if proxyCount <= 0 {
-		return nil, fmt.Errorf("未检测到可导入的 proxies 节点")
+		err = fmt.Errorf("未检测到可导入的 proxies 节点")
+		if log != nil {
+			log.Error("订阅解析失败", logger.F("url", parsedURL.String()), logger.F("error", err.Error()))
+		}
+		return nil, err
 	}
 
 	dnsYAML := extractClashDNSYAML(payload)
 	suggestedGroup := suggestClashGroupName(payload, parsedURL.Hostname())
+	if log != nil {
+		log.Info("订阅拉取成功", logger.F("url", parsedURL.String()), logger.F("proxy_count", proxyCount))
+	}
 
 	return map[string]interface{}{
 		"url":            parsedURL.String(),
@@ -82,6 +145,62 @@ func (a *App) BrowserProxyFetchClashByURL(rawURL string) (map[string]interface{}
 		"dnsServers":     dnsYAML,
 		"suggestedGroup": suggestedGroup,
 	}, nil
+}
+
+func downloadSubscriptionBytesWithCurl(targetURL string) ([]byte, error) {
+	curlPath, err := exec.LookPath("curl.exe")
+	if err != nil {
+		return nil, err
+	}
+	tempFile := filepath.Join(os.TempDir(), fmt.Sprintf("antbrowser-sub-%d.yaml", time.Now().UnixNano()))
+	defer os.Remove(tempFile)
+	cmd := exec.Command(curlPath, "--http1.1", "-L", "--fail", "-A", "clash-verge/2.0 ant-chrome/1.0", "-H", "Accept: application/yaml,text/yaml,text/plain,*/*", "-H", "Cache-Control: no-cache", "-o", tempFile, targetURL)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("%v %s", err, strings.TrimSpace(string(output)))
+	}
+	data, err := os.ReadFile(tempFile)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxClashSubscriptionBytes {
+		return nil, fmt.Errorf("订阅内容过大（超过 8MB）")
+	}
+	return data, nil
+}
+
+func downloadSubscriptionBytesWithPowerShell(targetURL string) ([]byte, error) {
+	tempFile := filepath.Join(os.TempDir(), fmt.Sprintf("antbrowser-sub-%d.yaml", time.Now().UnixNano()))
+	defer os.Remove(tempFile)
+	cmd := exec.Command("powershell.exe", "-Command", "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -UseBasicParsing -MaximumRedirection 5 -Uri $args[0] -OutFile $args[1] -Headers @{ 'User-Agent'='clash-verge/2.0 ant-chrome/1.0'; 'Accept'='application/yaml,text/yaml,text/plain,*/*'; 'Cache-Control'='no-cache' } | Out-Null", targetURL, tempFile)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("%v %s", err, strings.TrimSpace(string(output)))
+	}
+	data, err := os.ReadFile(tempFile)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxClashSubscriptionBytes {
+		return nil, fmt.Errorf("订阅内容过大（超过 8MB）")
+	}
+	return data, nil
+}
+
+func shouldRetrySubscriptionFetch(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(message, "timeout") ||
+		strings.Contains(message, "deadline exceeded") ||
+		strings.Contains(message, "connection reset") ||
+		strings.Contains(message, "eof") ||
+		strings.Contains(message, "http 408") ||
+		strings.Contains(message, "http 425") ||
+		strings.Contains(message, "http 429") ||
+		strings.Contains(message, "http 500") ||
+		strings.Contains(message, "http 502") ||
+		strings.Contains(message, "http 503") ||
+		strings.Contains(message, "http 504")
 }
 
 func normalizeClashSubscriptionContent(body []byte) (string, interface{}, error) {
@@ -122,18 +241,12 @@ func decodeBase64Text(raw string) (string, bool) {
 	if candidate == "" {
 		return "", false
 	}
-	// 一些订阅会返回 URL-safe base64 或缺少 padding，这里都尝试一遍。
 	padded := candidate
 	if mod := len(padded) % 4; mod != 0 {
 		padded += strings.Repeat("=", 4-mod)
 	}
 
-	encoders := []*base64.Encoding{
-		base64.StdEncoding,
-		base64.RawStdEncoding,
-		base64.URLEncoding,
-		base64.RawURLEncoding,
-	}
+	encoders := []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding}
 	for _, enc := range encoders {
 		if data, err := enc.DecodeString(candidate); err == nil {
 			decoded := strings.TrimSpace(strings.ReplaceAll(string(data), "\r\n", "\n"))
@@ -186,9 +299,7 @@ func extractClashDNSYAML(payload interface{}) string {
 	if !exists || dnsRaw == nil {
 		return ""
 	}
-	data, err := yaml.Marshal(map[string]interface{}{
-		"dns": dnsRaw,
-	})
+	data, err := yaml.Marshal(map[string]interface{}{"dns": dnsRaw})
 	if err != nil {
 		return ""
 	}
@@ -222,8 +333,7 @@ func toStringMap(value interface{}) map[string]interface{} {
 	case map[interface{}]interface{}:
 		out := make(map[string]interface{}, len(m))
 		for k, v := range m {
-			key := fmt.Sprint(k)
-			out[key] = v
+			out[fmt.Sprint(k)] = v
 		}
 		return out
 	default:

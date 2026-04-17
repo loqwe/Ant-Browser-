@@ -34,6 +34,7 @@ const BrowserCopyPage = lazyNamed(() => import('./modules/browser/pages/BrowserC
 const BrowserLogsPage = lazyNamed(() => import('./modules/browser/pages/BrowserLogsPage'), 'BrowserLogsPage')
 const ProxyPoolPage = lazyNamed(() => import('./modules/browser/pages/ProxyPoolPage'), 'ProxyPoolPage')
 const CoreManagementPage = lazyNamed(() => import('./modules/browser/pages/CoreManagementPage'), 'CoreManagementPage')
+const ExtensionManagementPage = lazyNamed(() => import('./modules/browser/pages/ExtensionManagementPage'), 'ExtensionManagementPage')
 const BookmarkSettingsPage = lazyNamed(() => import('./modules/browser/pages/BookmarkSettingsPage'), 'BookmarkSettingsPage')
 const LaunchApiDocsPage = lazyNamed(() => import('./modules/browser/pages/LaunchApiDocsPage'), 'LaunchApiDocsPage')
 const TagManagementPage = lazyNamed(() => import('./modules/browser/pages/TagManagementPage'), 'TagManagementPage')
@@ -291,6 +292,7 @@ function App() {
               <Route path="/browser/logs" element={<BrowserLogsPage />} />
               <Route path="/browser/proxy-pool" element={<ProxyPoolPage />} />
               <Route path="/browser/cores" element={<CoreManagementPage />} />
+              <Route path="/browser/extensions" element={<ExtensionManagementPage />} />
               <Route path="/browser/bookmarks" element={<BookmarkSettingsPage />} />
               <Route path="/browser/automation" element={<AutomationPage />} />
               <Route path="/browser/launch-api" element={<LaunchApiDocsPage />} />

@@ -15,10 +15,11 @@ func IsSingBoxProtocol(proxyConfig string) bool {
 	if strings.HasPrefix(l, "hysteria2://") || strings.HasPrefix(l, "hysteria://") {
 		return true
 	}
-	// Clash YAML 格式
 	if strings.Contains(l, "type: hysteria2") || strings.Contains(l, "type:hysteria2") ||
 		strings.Contains(l, "type: hysteria") || strings.Contains(l, "type:hysteria") ||
-		strings.Contains(l, "type: tuic") || strings.Contains(l, "type:tuic") {
+		strings.Contains(l, "type: tuic") || strings.Contains(l, "type:tuic") ||
+		strings.Contains(l, "type: trojan") || strings.Contains(l, "type:trojan") ||
+		strings.Contains(l, "type: ss") || strings.Contains(l, "type:ss") {
 		return true
 	}
 	return false
@@ -120,13 +121,17 @@ func parseClashSingBoxNode(src string) (map[string]interface{}, error) {
 		return buildSingBoxHysteria2FromClash(nodeMap)
 	case "tuic":
 		return buildSingBoxTUICFromClash(nodeMap)
+	case "trojan":
+		return buildSingBoxTrojanFromClash(nodeMap)
+	case "ss", "shadowsocks":
+		return buildSingBoxSSFromClash(nodeMap)
 	default:
-		return nil, fmt.Errorf("不支持的 sing-box 节点类型: %s", nodeType)
+		return nil, fmt.Errorf("???? sing-box ????: %s", nodeType)
 	}
 }
 
 func buildSingBoxHysteria2FromClash(node map[string]interface{}) (map[string]interface{}, error) {
-	host := getMapString(node, "server")
+	host := resolveBridgeServerHost(getMapString(node, "server"))
 	port := getMapInt(node, "port")
 	password := getMapString(node, "password")
 	sni := getMapString(node, "sni")
@@ -175,8 +180,66 @@ func buildSingBoxHysteria2FromClash(node map[string]interface{}) (map[string]int
 	return out, nil
 }
 
+func buildSingBoxTrojanFromClash(node map[string]interface{}) (map[string]interface{}, error) {
+	host := resolveBridgeServerHost(getMapString(node, "server"))
+	port := getMapInt(node, "port")
+	password := getMapString(node, "password")
+	sni := getMapString(node, "sni")
+	if sni == "" {
+		sni = getMapString(node, "servername")
+	}
+	skipVerify := getMapBool(node, "skip-cert-verify")
+
+	if host == "" || port == 0 {
+		return nil, fmt.Errorf("trojan ???????")
+	}
+
+	tls := map[string]interface{}{
+		"enabled":  true,
+		"insecure": skipVerify,
+		"alpn":     firstNonEmptyStringSlice(toStringSlice(node["alpn"]), []string{"h2", "http/1.1"}),
+	}
+	if sni != "" {
+		tls["server_name"] = sni
+	}
+	if fingerprint := getMapString(node, "client-fingerprint"); fingerprint != "" {
+		tls["utls"] = map[string]interface{}{"enabled": true, "fingerprint": fingerprint}
+	}
+
+	out := map[string]interface{}{
+		"type":        "trojan",
+		"tag":         "proxy-out",
+		"server":      host,
+		"server_port": port,
+		"password":    password,
+		"tls":         tls,
+	}
+	return out, nil
+}
+
+func buildSingBoxSSFromClash(node map[string]interface{}) (map[string]interface{}, error) {
+	host := resolveBridgeServerHost(getMapString(node, "server"))
+	port := getMapInt(node, "port")
+	password := getMapString(node, "password")
+	method := getMapString(node, "cipher")
+	if method == "" {
+		method = getMapString(node, "method")
+	}
+	if host == "" || port == 0 || method == "" {
+		return nil, fmt.Errorf("shadowsocks ???????")
+	}
+	return map[string]interface{}{
+		"type":        "shadowsocks",
+		"tag":         "proxy-out",
+		"server":      host,
+		"server_port": port,
+		"method":      method,
+		"password":    password,
+	}, nil
+}
+
 func buildSingBoxTUICFromClash(node map[string]interface{}) (map[string]interface{}, error) {
-	host := getMapString(node, "server")
+	host := resolveBridgeServerHost(getMapString(node, "server"))
 	port := getMapInt(node, "port")
 	uuid := getMapString(node, "uuid")
 	password := getMapString(node, "password")

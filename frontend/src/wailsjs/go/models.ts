@@ -1,5 +1,51 @@
 export namespace backend {
 	
+	export class BrowserFingerprintSuggestion {
+	    seed: string;
+	    brand: string;
+	    platform: string;
+	    lang: string;
+	    timezone: string;
+	    resolution: string;
+	    colorDepth: string;
+	    hardwareConcurrency: string;
+	    deviceMemory: string;
+	    touchPoints: string;
+	    canvasNoise: boolean;
+	    webglVendor: string;
+	    webglRenderer: string;
+	    audioNoise: boolean;
+	    fonts: string;
+	    webrtcPolicy: string;
+	    doNotTrack: boolean;
+	    mediaDevices: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new BrowserFingerprintSuggestion(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.seed = source["seed"];
+	        this.brand = source["brand"];
+	        this.platform = source["platform"];
+	        this.lang = source["lang"];
+	        this.timezone = source["timezone"];
+	        this.resolution = source["resolution"];
+	        this.colorDepth = source["colorDepth"];
+	        this.hardwareConcurrency = source["hardwareConcurrency"];
+	        this.deviceMemory = source["deviceMemory"];
+	        this.touchPoints = source["touchPoints"];
+	        this.canvasNoise = source["canvasNoise"];
+	        this.webglVendor = source["webglVendor"];
+	        this.webglRenderer = source["webglRenderer"];
+	        this.audioNoise = source["audioNoise"];
+	        this.fonts = source["fonts"];
+	        this.webrtcPolicy = source["webrtcPolicy"];
+	        this.doNotTrack = source["doNotTrack"];
+	        this.mediaDevices = source["mediaDevices"];
+	    }
+	}
 	export class CookieInfo {
 	    name: string;
 	    value: string;
@@ -330,6 +376,44 @@ export namespace browser {
 	        this.message = source["message"];
 	    }
 	}
+	export class Extension {
+	    extensionId: string;
+	    name: string;
+	    sourceType: string;
+	    sourcePath: string;
+	    unpackedPath: string;
+	    version: string;
+	    description: string;
+	    permissions: string[];
+	    hostPermissions: string[];
+	    optionsPage: string;
+	    iconPath: string;
+	    enabledByDefault: boolean;
+	    createdAt: string;
+	    updatedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Extension(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.extensionId = source["extensionId"];
+	        this.name = source["name"];
+	        this.sourceType = source["sourceType"];
+	        this.sourcePath = source["sourcePath"];
+	        this.unpackedPath = source["unpackedPath"];
+	        this.version = source["version"];
+	        this.description = source["description"];
+	        this.permissions = source["permissions"];
+	        this.hostPermissions = source["hostPermissions"];
+	        this.optionsPage = source["optionsPage"];
+	        this.iconPath = source["iconPath"];
+	        this.enabledByDefault = source["enabledByDefault"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
 	export class Group {
 	    groupId: string;
 	    groupName: string;
@@ -454,6 +538,30 @@ export namespace browser {
 	        this.lastStopAt = source["lastStopAt"];
 	    }
 	}
+	export class ProfileExtensionBinding {
+	    bindingId: string;
+	    profileId: string;
+	    extensionId: string;
+	    enabled: boolean;
+	    sortOrder: number;
+	    createdAt: string;
+	    updatedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfileExtensionBinding(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.bindingId = source["bindingId"];
+	        this.profileId = source["profileId"];
+	        this.extensionId = source["extensionId"];
+	        this.enabled = source["enabled"];
+	        this.sortOrder = source["sortOrder"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
 	export class ProfileInput {
 	    profileName: string;
 	    userDataDir: string;
@@ -504,6 +612,80 @@ export namespace browser {
 	        this.defaultProxy = source["defaultProxy"];
 	        this.startReadyTimeoutMs = source["startReadyTimeoutMs"];
 	        this.startStableWindowMs = source["startStableWindowMs"];
+	    }
+	}
+	export class SubscriptionNode {
+	    nodeKey: string;
+	    sourceId: string;
+	    nodeName: string;
+	    protocol: string;
+	    server: string;
+	    port: number;
+	    displayGroup: string;
+	    chainMode: string;
+	    upstreamAlias: string;
+	    nodeJson: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubscriptionNode(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.nodeKey = source["nodeKey"];
+	        this.sourceId = source["sourceId"];
+	        this.nodeName = source["nodeName"];
+	        this.protocol = source["protocol"];
+	        this.server = source["server"];
+	        this.port = source["port"];
+	        this.displayGroup = source["displayGroup"];
+	        this.chainMode = source["chainMode"];
+	        this.upstreamAlias = source["upstreamAlias"];
+	        this.nodeJson = source["nodeJson"];
+	    }
+	}
+	export class SubscriptionSource {
+	    sourceId: string;
+	    name: string;
+	    url: string;
+	    enabled: boolean;
+	    refreshIntervalMinutes: number;
+	    lastRefreshAt: string;
+	    lastRefreshStatus: string;
+	    lastError: string;
+	    trafficUsed: string;
+	    trafficTotal: string;
+	    expireAt: string;
+	    rawContentHash?: string;
+	    proxyGroupsJson?: string;
+	    selectedProxyGroupsJson?: string;
+	    importMode?: string;
+	    selectedNodeKeysJson?: string;
+	    importStatsJson?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SubscriptionSource(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sourceId = source["sourceId"];
+	        this.name = source["name"];
+	        this.url = source["url"];
+	        this.enabled = source["enabled"];
+	        this.refreshIntervalMinutes = source["refreshIntervalMinutes"];
+	        this.lastRefreshAt = source["lastRefreshAt"];
+	        this.lastRefreshStatus = source["lastRefreshStatus"];
+	        this.lastError = source["lastError"];
+	        this.trafficUsed = source["trafficUsed"];
+	        this.trafficTotal = source["trafficTotal"];
+	        this.expireAt = source["expireAt"];
+	        this.rawContentHash = source["rawContentHash"];
+	        this.proxyGroupsJson = source["proxyGroupsJson"];
+	        this.selectedProxyGroupsJson = source["selectedProxyGroupsJson"];
+	        this.importMode = source["importMode"];
+	        this.selectedNodeKeysJson = source["selectedNodeKeysJson"];
+	        this.importStatsJson = source["importStatsJson"];
 	    }
 	}
 	export class Tab {
@@ -574,6 +756,14 @@ export namespace config {
 	    sourceAutoRefresh?: boolean;
 	    sourceRefreshIntervalM?: number;
 	    sourceLastRefreshAt?: string;
+	    sourceNodeName?: string;
+	    displayGroup?: string;
+	    chainMode?: string;
+	    upstreamProxyId?: string;
+	    upstreamAlias?: string;
+	    rawProxyGroupName?: string;
+	    rawProxyConfig?: string;
+	    chainStatus?: string;
 	    lastLatencyMs: number;
 	    lastTestOk: boolean;
 	    lastTestedAt: string;
@@ -597,6 +787,14 @@ export namespace config {
 	        this.sourceAutoRefresh = source["sourceAutoRefresh"];
 	        this.sourceRefreshIntervalM = source["sourceRefreshIntervalM"];
 	        this.sourceLastRefreshAt = source["sourceLastRefreshAt"];
+	        this.sourceNodeName = source["sourceNodeName"];
+	        this.displayGroup = source["displayGroup"];
+	        this.chainMode = source["chainMode"];
+	        this.upstreamProxyId = source["upstreamProxyId"];
+	        this.upstreamAlias = source["upstreamAlias"];
+	        this.rawProxyGroupName = source["rawProxyGroupName"];
+	        this.rawProxyConfig = source["rawProxyConfig"];
+	        this.chainStatus = source["chainStatus"];
 	        this.lastLatencyMs = source["lastLatencyMs"];
 	        this.lastTestOk = source["lastTestOk"];
 	        this.lastTestedAt = source["lastTestedAt"];

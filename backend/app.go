@@ -41,6 +41,7 @@ type App struct {
 	xrayMgr        *proxy.XrayManager
 	clashMgr       *proxy.ClashManager
 	singboxMgr     *proxy.SingBoxManager
+	mihomoMgr      *proxy.MihomoManager
 	launchCodeSvc  *launchcode.LaunchCodeService
 	launchServer   *launchcode.LaunchServer
 	speedScheduler *browser.ProxySpeedScheduler
@@ -52,6 +53,7 @@ type App struct {
 	maintenanceMu    sync.Mutex // 维护类操作（初始化/导入/导出）互斥锁
 	bridgeMu         sync.Mutex
 	xrayBridgeRefs   map[string]string
+	mihomoBridgeRefs map[string]string
 	stopServicesOnce sync.Once
 	finalizeOnce     sync.Once
 }
@@ -63,9 +65,10 @@ func NewApp(appRoot string, appVersion ...string) *App {
 		version = strings.TrimSpace(appVersion[0])
 	}
 	return &App{
-		appRoot:        strings.TrimSpace(appRoot),
-		version:        version,
-		xrayBridgeRefs: make(map[string]string),
+		appRoot:          strings.TrimSpace(appRoot),
+		version:          version,
+		xrayBridgeRefs:   make(map[string]string),
+		mihomoBridgeRefs: make(map[string]string),
 	}
 }
 
@@ -100,9 +103,10 @@ func (a *App) startup(ctx context.Context) {
 	a.config = cfg
 	a.applyRuntimeConfig(cfg.Runtime)
 
+	fileLoggingEnabled := cfg.Logging.FileEnabled || strings.TrimSpace(cfg.Logging.FilePath) != ""
 	logConfig := logger.LoggerConfig{
 		Level:           cfg.Logging.Level,
-		FileEnabled:     cfg.Logging.FileEnabled,
+		FileEnabled:     fileLoggingEnabled,
 		FilePath:        a.resolveAppPath(cfg.Logging.FilePath),
 		Format:          cfg.Logging.Format,
 		BufferSize:      cfg.Logging.BufferSize,
@@ -163,17 +167,25 @@ func (a *App) startup(ctx context.Context) {
 	a.xrayMgr = proxy.NewXrayManager(cfg, a.appRoot)
 	a.clashMgr = proxy.NewClashManager(cfg, a.appRoot)
 	a.singboxMgr = proxy.NewSingBoxManager(cfg, a.appRoot)
+	a.mihomoMgr = proxy.NewMihomoManager(cfg, a.appRoot)
 
 	// 注入 DAO（必须在 InitData 之前）
 	conn := db.GetConn()
 	a.browserMgr.ProfileDAO = browser.NewSQLiteProfileDAO(conn)
 	a.browserMgr.ProxyDAO = browser.NewSQLiteProxyDAO(conn)
+	a.browserMgr.SubscriptionDAO = browser.NewSQLiteSubscriptionDAO(conn)
+	a.browserMgr.SubscriptionNodeDAO = browser.NewSQLiteSubscriptionNodeDAO(conn)
 	a.browserMgr.CoreDAO = browser.NewSQLiteCoreDAO(conn)
 	a.browserMgr.BookmarkDAO = browser.NewSQLiteBookmarkDAO(conn)
 	a.browserMgr.GroupDAO = browser.NewSQLiteGroupDAO(conn)
+	a.browserMgr.ExtensionDAO = browser.NewSQLiteExtensionDAO(conn)
+	a.browserMgr.ProfileExtensionDAO = browser.NewSQLiteProfileExtensionDAO(conn)
 
 	// 一次性迁移：若 SQLite 表为空则从旧文件导入
 	a.migrateToSQLite()
+	if err := a.reconcileSubscriptionSelections(); err != nil {
+		log.Warn("订阅 selector 自愈失败", logger.F("error", err.Error()))
+	}
 
 	a.browserMgr.InitData()
 	a.autoDetectCores()
@@ -229,7 +241,7 @@ func (a *App) startup(ctx context.Context) {
 	a.speedScheduler = browser.NewProxySpeedScheduler(
 		a.browserMgr.ProxyDAO,
 		func(proxyId string) (bool, int64, string) {
-			r := proxy.SpeedTest(proxyId, a.config.Browser.Proxies, a.xrayMgr, a.singboxMgr, nil)
+			r := proxy.SpeedTest(proxyId, a.config.Browser.Proxies, a.xrayMgr, a.singboxMgr, a.mihomoMgr, nil)
 			return r.Ok, r.LatencyMs, r.Error
 		},
 		5*time.Minute,
@@ -266,6 +278,9 @@ func (a *App) ReloadConfig() error {
 	}
 	if a.singboxMgr != nil {
 		a.singboxMgr.Config = cfg
+	}
+	if a.mihomoMgr != nil {
+		a.mihomoMgr.Config = cfg
 	}
 	if a.launchServer != nil {
 		a.launchServer.SetAPIAuthConfig(launchcode.APIAuthConfig{
@@ -394,6 +409,37 @@ func (a *App) clearProfileXrayBridges() {
 	a.bridgeMu.Unlock()
 }
 
+func (a *App) bindProfileMihomoBridge(profileId string, bridgeKey string) {
+	profileId = strings.TrimSpace(profileId)
+	bridgeKey = strings.TrimSpace(bridgeKey)
+	if profileId == "" || bridgeKey == "" {
+		return
+	}
+	a.bridgeMu.Lock()
+	a.mihomoBridgeRefs[profileId] = bridgeKey
+	a.bridgeMu.Unlock()
+}
+
+func (a *App) releaseProfileMihomoBridge(profileId string) {
+	profileId = strings.TrimSpace(profileId)
+	if profileId == "" {
+		return
+	}
+	a.bridgeMu.Lock()
+	bridgeKey := a.mihomoBridgeRefs[profileId]
+	delete(a.mihomoBridgeRefs, profileId)
+	a.bridgeMu.Unlock()
+	if bridgeKey != "" && a.mihomoMgr != nil {
+		a.mihomoMgr.ReleaseBridge(bridgeKey)
+	}
+}
+
+func (a *App) clearProfileMihomoBridges() {
+	a.bridgeMu.Lock()
+	a.mihomoBridgeRefs = make(map[string]string)
+	a.bridgeMu.Unlock()
+}
+
 // ============================================================================
 // 仪表盘 API
 // ============================================================================
@@ -479,10 +525,14 @@ type BrowserProfileInput = browser.ProfileInput
 type BrowserTab = browser.Tab
 type BrowserSettings = browser.Settings
 type BrowserProxy = browser.Proxy
+type BrowserSubscriptionSource = browser.SubscriptionSource
+type BrowserSubscriptionNode = browser.SubscriptionNode
 type BrowserCore = browser.Core
 type BrowserCoreInput = browser.CoreInput
 type BrowserCoreValidateResult = browser.CoreValidateResult
 type BrowserCoreExtendedInfo = browser.CoreExtendedInfo
+type BrowserExtension = browser.Extension
+type BrowserProfileExtensionBinding = browser.ProfileExtensionBinding
 
 // ============================================================================
 // 浏览器配置 API
@@ -696,14 +746,14 @@ func (a *App) TestProxyConnectivity(proxyId string, proxyConfig string) ProxyTes
 // 参考 Clash URLTest 策略：多 URL fallback + 复用桥接 + TCP ping 降级
 func (a *App) TestProxyRealConnectivity(proxyId string) ProxyTestResult {
 	proxies := a.getLatestProxies()
-	r := proxy.SpeedTest(proxyId, proxies, a.xrayMgr, a.singboxMgr, nil)
+	r := proxy.SpeedTest(proxyId, proxies, a.xrayMgr, a.singboxMgr, a.mihomoMgr, nil)
 	return ProxyTestResult{ProxyId: r.ProxyId, Ok: r.Ok, LatencyMs: r.LatencyMs, Error: r.Error}
 }
 
 // BrowserProxyTestSpeed 手动触发单个代理测速并持久化结果
 func (a *App) BrowserProxyTestSpeed(proxyId string) ProxyTestResult {
 	proxies := a.getLatestProxies()
-	r := proxy.SpeedTest(proxyId, proxies, a.xrayMgr, a.singboxMgr, nil)
+	r := proxy.SpeedTest(proxyId, proxies, a.xrayMgr, a.singboxMgr, a.mihomoMgr, nil)
 	if a.browserMgr.ProxyDAO != nil {
 		testedAt := time.Now().Format(time.RFC3339)
 		_ = a.browserMgr.ProxyDAO.UpdateSpeedResult(proxyId, r.Ok, r.LatencyMs, testedAt)
@@ -737,7 +787,7 @@ func (a *App) BrowserProxyBatchTestSpeed(proxyIds []string, concurrency int) []P
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				r := proxy.SpeedTest(job.ProxyId, proxies, a.xrayMgr, a.singboxMgr, nil)
+				r := proxy.SpeedTest(job.ProxyId, proxies, a.xrayMgr, a.singboxMgr, a.mihomoMgr, nil)
 				if a.browserMgr.ProxyDAO != nil {
 					testedAt := time.Now().Format(time.RFC3339)
 					_ = a.browserMgr.ProxyDAO.UpdateSpeedResult(job.ProxyId, r.Ok, r.LatencyMs, testedAt)
@@ -765,7 +815,7 @@ func (a *App) BrowserProxyBatchTestSpeed(proxyIds []string, concurrency int) []P
 // BrowserProxyCheckIPHealth 检测单个代理的出口 IP 健康信息（通过 IPPure 接口）
 func (a *App) BrowserProxyCheckIPHealth(proxyId string) ProxyIPHealthResult {
 	proxies := a.getLatestProxies()
-	data, err := proxy.FetchIPPureInfo(proxyId, proxies, a.xrayMgr, a.singboxMgr)
+	data, err := proxy.FetchIPPureInfo(proxyId, proxies, a.xrayMgr, a.singboxMgr, a.mihomoMgr)
 	result := buildProxyIPHealthResult(proxyId, data, err)
 	a.persistProxyIPHealthResult(result)
 	if a.ctx != nil {
@@ -800,7 +850,7 @@ func (a *App) BrowserProxyBatchCheckIPHealth(proxyIds []string, concurrency int)
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				data, err := proxy.FetchIPPureInfo(job.ProxyId, proxies, a.xrayMgr, a.singboxMgr)
+				data, err := proxy.FetchIPPureInfo(job.ProxyId, proxies, a.xrayMgr, a.singboxMgr, a.mihomoMgr)
 				result := buildProxyIPHealthResult(job.ProxyId, data, err)
 				a.persistProxyIPHealthResult(result)
 				results[job.Idx] = result
@@ -839,7 +889,7 @@ func buildProxyIPHealthResult(proxyId string, data map[string]interface{}, err e
 	return ProxyIPHealthResult{
 		ProxyId:        proxyId,
 		Ok:             true,
-		Source:         "ippure",
+		Source:         firstNonEmpty(mapString(data, "_source"), "ippure"),
 		Error:          "",
 		IP:             mapString(data, "ip"),
 		FraudScore:     mapInt64(data, "fraudScore"),
@@ -1006,6 +1056,14 @@ func (a *App) SaveBrowserProxies(proxies []BrowserProxy) error {
 			SourceAutoRefresh:      sourceAutoRefresh,
 			SourceRefreshIntervalM: sourceRefreshIntervalM,
 			SourceLastRefreshAt:    sourceLastRefreshAt,
+			SourceNodeName:         strings.TrimSpace(item.SourceNodeName),
+			DisplayGroup:           strings.TrimSpace(item.DisplayGroup),
+			ChainMode:              strings.TrimSpace(item.ChainMode),
+			UpstreamProxyId:        strings.TrimSpace(item.UpstreamProxyId),
+			UpstreamAlias:          strings.TrimSpace(item.UpstreamAlias),
+			RawProxyGroupName:      strings.TrimSpace(item.RawProxyGroupName),
+			RawProxyConfig:         strings.TrimSpace(item.RawProxyConfig),
+			ChainStatus:            strings.TrimSpace(item.ChainStatus),
 			SortOrder:              i,
 		})
 	}

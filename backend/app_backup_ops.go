@@ -462,7 +462,7 @@ func (a *App) backupReloadAfterMutation() error {
 		a.speedScheduler = browser.NewProxySpeedScheduler(
 			a.browserMgr.ProxyDAO,
 			func(proxyID string) (bool, int64, string) {
-				r := proxy.SpeedTest(proxyID, a.config.Browser.Proxies, a.xrayMgr, a.singboxMgr, nil)
+				r := proxy.SpeedTest(proxyID, a.config.Browser.Proxies, a.xrayMgr, a.singboxMgr, a.mihomoMgr, nil)
 				return r.Ok, r.LatencyMs, r.Error
 			},
 			5*time.Minute,

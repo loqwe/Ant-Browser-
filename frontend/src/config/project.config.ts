@@ -40,6 +40,7 @@ export const navigationConfig: NavSection[] = [
       { name: '代理池配置', path: '/browser/proxy-pool', icon: 'Globe' },
       { name: '默认书签', path: '/browser/bookmarks', icon: 'Bookmark' },
       { name: '标签管理', path: '/browser/tags', icon: 'Tag' },
+      { name: '扩展管理', path: '/browser/extensions', icon: 'Puzzle' },
     ]
   },
   {

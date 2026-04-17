@@ -16,6 +16,7 @@ import {
 } from '../api'
 import { CookieManagerCard } from '../components/CookieManagerCard'
 import { SnapshotTab } from '../components/SnapshotTab'
+import { ProfileExtensionTab } from '../components/ProfileExtensionTab'
 import { resolveActionErrorMessage, resolveActionFeedback } from '../utils/actionErrors'
 
 const resolveRuntimeStatus = (running: boolean, debugReady: boolean) => {
@@ -31,11 +32,12 @@ const formatTime = (value?: string) => {
   return date.toLocaleString('zh-CN')
 }
 
-type TabKey = 'overview' | 'snapshot'
+type TabKey = 'overview' | 'snapshot' | 'extensions'
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: '概览' },
   { key: 'snapshot', label: '快照管理' },
+  { key: 'extensions', label: '扩展' },
 ]
 
 export function BrowserDetailPage() {
@@ -377,6 +379,10 @@ export function BrowserDetailPage() {
       {/* 快照管理 Tab */}
       {activeTab === 'snapshot' && (
         <SnapshotTab profileId={profile.profileId} running={profile.running} />
+      )}
+
+      {activeTab === 'extensions' && (
+        <ProfileExtensionTab profileId={profile.profileId} running={profile.running} />
       )}
     </div>
   )

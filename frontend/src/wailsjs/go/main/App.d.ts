@@ -43,6 +43,28 @@ export function BrowserCoreValidate(arg1:string):Promise<browser.CoreValidateRes
 
 export function BrowserExportCookies(arg1:string):Promise<string>;
 
+export function BrowserExtensionDelete(arg1:string):Promise<void>;
+
+export function BrowserExtensionImportCRX(arg1:string):Promise<browser.Extension>;
+
+export function BrowserExtensionImportChromeStore(arg1:string):Promise<browser.Extension>;
+
+export function BrowserExtensionImportDir(arg1:string):Promise<browser.Extension>;
+
+export function BrowserExtensionImportURL(arg1:string):Promise<browser.Extension>;
+
+export function BrowserExtensionList():Promise<Array<browser.Extension>>;
+
+export function BrowserExtensionRefresh(arg1:string):Promise<browser.Extension>;
+
+export function BrowserExtensionSelectCRX():Promise<string>;
+
+export function BrowserExtensionSelectDir():Promise<string>;
+
+export function BrowserExtensionSetDefaultScope(arg1:string,arg2:boolean):Promise<browser.Extension>;
+
+export function BrowserFingerprintSuggestByProxy(arg1:string,arg2:string):Promise<backend.BrowserFingerprintSuggestion>;
+
 export function BrowserGetAllTags():Promise<Array<string>>;
 
 export function BrowserGetCookies(arg1:string):Promise<Array<backend.CookieInfo>>;
@@ -72,6 +94,10 @@ export function BrowserProfileCopy(arg1:string,arg2:string):Promise<browser.Prof
 export function BrowserProfileCreate(arg1:browser.ProfileInput):Promise<browser.Profile>;
 
 export function BrowserProfileDelete(arg1:string):Promise<void>;
+
+export function BrowserProfileExtensionList(arg1:string):Promise<Array<browser.ProfileExtensionBinding>>;
+
+export function BrowserProfileExtensionSave(arg1:string,arg2:Array<browser.ProfileExtensionBinding>):Promise<void>;
 
 export function BrowserProfileGetCode(arg1:string):Promise<string>;
 
@@ -112,6 +138,16 @@ export function BrowserSnapshotDelete(arg1:string,arg2:string):Promise<void>;
 export function BrowserSnapshotList(arg1:string):Promise<Array<backend.SnapshotInfo>>;
 
 export function BrowserSnapshotRestore(arg1:string,arg2:string):Promise<void>;
+
+export function BrowserSubscriptionDelete(arg1:string):Promise<void>;
+
+export function BrowserSubscriptionList():Promise<Array<browser.SubscriptionSource>>;
+
+export function BrowserSubscriptionNodeList(arg1:string):Promise<Array<browser.SubscriptionNode>>;
+
+export function BrowserSubscriptionRefresh(arg1:string):Promise<void>;
+
+export function BrowserSubscriptionSave(arg1:browser.SubscriptionSource):Promise<browser.SubscriptionSource>;
 
 export function ClearAppLogs():Promise<void>;
 
